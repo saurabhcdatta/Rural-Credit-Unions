@@ -121,10 +121,80 @@ if (nrow(est2)) {
 ## Similar coefficients under both definitions = the finding is not an artifact
 ## of where charters are domiciled.
 
-## ---- 8.7 read-out -----------------------------------------------------------
+## ---- 8.7 survivorship -- the main threat to everything above ----------------
+## A third of the 2010 rural cohort is gone. If weak rural CUs exited faster,
+## the survivors would look strong for reasons that have nothing to do with
+## rurality, and the 8.2-8.5 results would be conditional on survival -- a much
+## weaker claim. This is the check that decides whether the finding holds.
+##
+## Read the rural hazard ratio (exp(coef)):
+##   at or below 1  -> rural CUs are NOT selectively exiting; the advantage
+##                     cannot be survivorship, and 8.2-8.5 stand as written
+##   well above 1   -> restate the performance result as conditional on
+##                     survival, and put the hazard ratio next to it
+
+library(survival)
+
+panel_end   <- cr[, max(qidx)]
+panel_start <- cr[, min(qidx)]
+
+## one row per credit union; exit = stopped reporting before the panel ends
+sv <- cr[, .(first_q   = min(qidx),
+             last_q    = max(qidx),
+             rural     = rural[which.max(qidx)],
+             ln_assets = mean(ln_assets, na.rm = TRUE),
+             networth_pct = mean(networth_pct, na.rm = TRUE),
+             roa_pct   = mean(roa_pct, na.rm = TRUE),
+             lid = max(lid), mdi = max(mdi), fed = max(fed),
+             st  = st[which.max(qidx)]), by = cu_number]
+sv[, `:=`(exit = as.integer(last_q < panel_end),
+          dur  = last_q - first_q + 1L,
+          left_censored = as.integer(first_q == panel_start))]
+
+sv[, .(credit_unions = .N, exits = sum(exit),
+       exit_rate_pct = round(100 * mean(exit), 1),
+       median_quarters = median(dur)), by = rural]          ## LOOK
+
+## ---- 8.7a raw vs conditional hazard -----------------------------------------
+## Raw first, then conditional on size -- same logic as 8.2. Rural CUs are
+## smaller and small CUs exit more, so the raw hazard will overstate.
+cx1 <- coxph(Surv(dur, exit) ~ rural, data = sv)
+cx2 <- coxph(Surv(dur, exit) ~ rural + ln_assets + I(ln_assets^2), data = sv)
+cx3 <- coxph(Surv(dur, exit) ~ rural + ln_assets + I(ln_assets^2) +
+               networth_pct + roa_pct + lid + mdi + fed + strata(st), data = sv)
+
+hz <- rbindlist(lapply(list(raw = cx1, size = cx2, full = cx3), function(m) {
+  ct <- summary(m)$coefficients["rural", ]
+  data.table(hazard_ratio = ct["exp(coef)"], se = ct["se(coef)"], p = ct["Pr(>|z|)"])
+}), idcol = "spec")
+hz[, pct_change := round(100 * (hazard_ratio - 1), 1)]
+hz                                                          ## LOOK
+
+## ---- 8.7b does the survivor pool explain the performance gap? ---------------
+## Re-run the headline growth spec on BALANCED survivors only -- CUs present
+## for the whole panel. If the rural coefficient holds there, selection into
+## the survivor pool is not what is generating it.
+always <- sv[first_q == panel_start & last_q == panel_end, cu_number]
+est_bal <- est[cu_number %in% always]
+
+bal <- rbindlist(lapply(c("g_assets", "networth_pct", "roa_pct"), function(y) {
+  mm <- fit(y, paste("rural", CTRL, sep = " + "), "st^qtr", est_bal)
+  ct <- coeftable(mm)["rural", ]
+  data.table(outcome = y, beta_balanced = ct[1], se = ct[2], p = ct[4])
+}))
+merge(bal, shrink[, .(outcome, beta_full = m4_state)], by = "outcome")   ## LOOK
+cat("\nCoefficients close to the full-sample ones => survivorship is not\n",
+    "driving the result. Much smaller => restate 8.2-8.5 as conditional\n",
+    "on survival and say so in the report.\n", sep = "")
+
+fwrite(hz,  file.path(OUT_DIR, "q1_survival_hazard.csv"))
+fwrite(bal, file.path(OUT_DIR, "q1_balanced_panel_check.csv"))
+
+## ---- 8.8 read-out -----------------------------------------------------------
 cat("\n", strrep("=", 70), "\n  Q1: is 'rural' different from 'small'?\n", strrep("=", 70), "\n", sep = "")
 cat("\nShare of raw gap surviving conditioning:\n"); print(shrink[, .(outcome, pct_surviving)])
 cat("\nShare of gap unexplained by observables:\n");  print(D[, .(outcome, pct_unexplained)])
+cat("\nExit hazard for rural CUs (1.0 = same as non-rural):\n"); print(hz[, .(spec, hazard_ratio, p)])
 cat("\n  small + small  -> SCALE story; promote the cost function work\n")
 cat("  large          -> RURAL story; promote the Sec. 909(c)(2) barrier work\n")
 cat("  differs by outcome, or concentrated in the small bands (8.4)\n")
