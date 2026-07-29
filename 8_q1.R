@@ -151,9 +151,12 @@ sv[, `:=`(exit = as.integer(last_q < panel_end),
           dur  = last_q - first_q + 1L,
           left_censored = as.integer(first_q == panel_start))]
 
+## as.numeric() on the median: median() returns integer for an odd-length
+## group and double for an even one, and data.table will not reconcile the two
+## across groups.
 sv[, .(credit_unions = .N, exits = sum(exit),
        exit_rate_pct = round(100 * mean(exit), 1),
-       median_quarters = median(dur)), by = rural]          ## LOOK
+       median_quarters = as.numeric(median(dur))), by = rural]   ## LOOK
 
 ## ---- 8.7a raw vs conditional hazard -----------------------------------------
 ## Raw first, then conditional on size -- same logic as 8.2. Rural CUs are
