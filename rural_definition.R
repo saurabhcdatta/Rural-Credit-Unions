@@ -457,15 +457,18 @@ attach_rural <- function(dt, uic_dt, label = "rural") {
 ## dropping is worse than misclassification: nothing warns you.
 
 FIPS_CHANGES <- data.table(
-  old_fips = c("02261",  "02261",  "02270",  "46113",  "51515"),
-  new_fips = c("02063",  "02066",  "02158",  "46102",  "51019"),
-  kind     = c("split",  "split",  "rename", "rename", "absorbed"),
+  old_fips = c("02261","02261","02270","46113","51515","12025","30113","30113"),
+  new_fips = c("02063","02066","02158","46102","51019","12086","30067","30031"),
+  kind     = c("split","split","rename","rename","absorbed","rename","split","split"),
   note = c(
     "Valdez-Cordova Census Area AK dissolved 2019 -> Chugach Census Area",
     "Valdez-Cordova Census Area AK dissolved 2019 -> Copper River Census Area",
     "Wade Hampton Census Area AK renamed 2015 -> Kusilvak Census Area",
     "Shannon County SD renamed 2015 -> Oglala Lakota County",
-    "Bedford (independent city) VA reverted to town 2013 -> Bedford County"
+    "Bedford (independent city) VA reverted to town 2013 -> Bedford County",
+    "Dade County FL renamed 1997 -> Miami-Dade County",
+    "Yellowstone National Park County MT abolished 1997 -> Park County",
+    "Yellowstone National Park County MT abolished 1997 -> Gallatin County"
   )
 )
 
@@ -495,32 +498,93 @@ ct_matters <- function(u2013, u2024) {
 ## Map historical FIPS onto current geography before joining the 2024 UIC.
 harmonize_fips <- function(x, fips_col = "fips", uic24 = NULL) {
   x <- copy(x)
-  one_to_one <- FIPS_CHANGES[kind != "split"]
-  n_hit <- x[get(fips_col) %in% one_to_one$old_fips, .N]
-  if (n_hit)
-    x[one_to_one, on = setNames("old_fips", fips_col), (fips_col) := i.new_fips]
+
+  one <- FIPS_CHANGES[kind != "split"]
+  n_hit <- x[get(fips_col) %in% one$old_fips, .N]
+  if (n_hit) x[one, on = setNames("old_fips", fips_col), (fips_col) := i.new_fips]
   message("Harmonized ", n_hit, " rows on renamed/absorbed FIPS")
 
-  ## The Alaska split has no 1:1 backward map. It only matters if the two
-  ## successors disagree on rural status -- check rather than assume.
-  n_split <- x[get(fips_col) == "02261", .N]
-  if (n_split) {
-    if (!is.null(uic24)) {
-      r <- uic24[fips %in% c("02063", "02066"), unique(rural)]
-      if (length(r) == 1L) {
-        x[get(fips_col) == "02261", (fips_col) := "02063"]
-        message("02261 (Valdez-Cordova AK): both successors have rural = ", r,
-                "; mapped to 02063, rural flag unaffected")
-      } else {
-        warning("02261 successors DISAGREE on rural status -- assign ",
-                n_split, " rows by hand", call. = FALSE)
-      }
+  ## Splits have no 1:1 backward map. They only matter if the successors
+  ## disagree on rural status -- check rather than assume.
+  splits <- FIPS_CHANGES[kind == "split"]
+  for (old in unique(splits$old_fips)) {
+    n <- x[get(fips_col) == old, .N]
+    if (!n) next
+    succ <- splits[old_fips == old, new_fips]
+    if (is.null(uic24)) {
+      warning(n, " rows on split FIPS ", old, ". Pass uic24 to resolve.", call. = FALSE); next
+    }
+    r <- uic24[fips %in% succ, unique(rural)]
+    if (length(r) == 1L) {
+      x[get(fips_col) == old, (fips_col) := succ[1]]
+      message(old, ": successors agree (rural = ", r, "); mapped to ", succ[1],
+              " -- ", n, " rows, rural flag unaffected")
     } else {
-      warning(n_split, " rows on 02261 (Valdez-Cordova AK, split in 2019). ",
-              "Pass uic24 to resolve automatically.", call. = FALSE)
+      warning(old, " successors DISAGREE on rural status -- assign ", n,
+              " rows by hand", call. = FALSE)
     }
   }
   x[]
+}
+
+## ---------------------------------------------------------------------------
+## CONNECTICUT
+## ---------------------------------------------------------------------------
+## Census replaced CT's 8 counties with 9 planning regions in 2022. The 2024
+## UIC uses planning regions; historical Call Report records carry the old
+## county codes, so a naive join drops every Connecticut credit union.
+##
+## A county-to-planning-region crosswalk is many-to-many and would be a
+## fabrication at the institution level. The defensible move is to check
+## whether the mismatch can affect the rural flag at all: if no CT geography
+## is rural under either vintage, assign rural = 0 and document it.
+
+resolve_ct <- function(x, u2013, u2024, fips_col = "fips",
+                       rural_cols = c("rural_2024", "rural_2013")) {
+  a <- u2013[substr(fips, 1, 2) == "09", .(n = .N, rural = sum(rural))]
+  b <- u2024[substr(fips, 1, 2) == "09", .(n = .N, rural = sum(rural))]
+  cat("\n--- Connecticut resolution ---\n")
+  cat("  rural geographies, 2013 UIC (counties)        : ", a$rural, " of ", a$n, "\n", sep = "")
+  cat("  rural geographies, 2024 UIC (planning regions): ", b$rural, " of ", b$n, "\n", sep = "")
+
+  n_ct <- x[substr(get(fips_col), 1, 2) == "09", .N]
+  if (a$rural == 0 && b$rural == 0) {
+    for (rc in intersect(rural_cols, names(x)))
+      x[substr(get(fips_col), 1, 2) == "09" & is.na(get(rc)), (rc) := 0L]
+    cat("  -> No CT geography is rural under either vintage, so the county/\n")
+    cat("     planning-region mismatch cannot change any rural flag.\n")
+    cat("     Assigned rural = 0 to ", n_ct, " Connecticut CU-quarters.\n", sep = "")
+    cat("     DOCUMENT THIS in the technical appendix.\n\n")
+  } else {
+    cat("  -> CT HAS rural geography. A crosswalk is required; records left\n")
+    cat("     unclassified. Source: https://www2.census.gov/geo/docs/reference/ct_change/\n\n")
+  }
+  x[]
+}
+
+## ---------------------------------------------------------------------------
+## WHY DID RECORDS FAIL TO MATCH?
+## ---------------------------------------------------------------------------
+## Categorize before dropping. Systematic loss (a whole state) is a different
+## problem from scattered loss, and only one of them is acceptable.
+
+diagnose_unmatched <- function(x, fips_col = "fips", rural_col = "rural") {
+  u <- x[is.na(get(rural_col))]
+  if (!nrow(u)) { cat("\nNo unmatched CU-quarters.\n"); return(invisible(NULL)) }
+
+  u[, reason := fifelse(substr(get(fips_col), 3, 5) == "000", "county code missing (000)",
+                fifelse(substr(get(fips_col), 1, 2) == "09", "Connecticut (planning regions)",
+                fifelse(as.integer(substr(get(fips_col), 1, 2)) > 56, "territory",
+                        "unrecognized FIPS")))]
+  tab <- u[, .(cu_quarters = .N, credit_unions = uniqueN(cu_number)), by = reason][order(-cu_quarters)]
+  cat("\n--- Why records are unmatched ---\n"); print(tab)
+  cat("\nWorst offenders:\n")
+  print(u[, .(cu_quarters = .N, credit_unions = uniqueN(cu_number)),
+          by = .(fips = get(fips_col), reason)][order(-cu_quarters)][1:12])
+  cat("\n'county code missing' rows can often be recovered from zip_code_char5\n")
+  cat("via the HUD USPS ZIP-to-county crosswalk. Territories need an explicit\n")
+  cat("scope decision -- Puerto Rico carries UICs, the others do not.\n\n")
+  invisible(tab)
 }
 
 ## County-level reclassification, straight off the two UIC tables. This is the
