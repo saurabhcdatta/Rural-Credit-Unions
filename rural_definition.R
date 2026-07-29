@@ -457,9 +457,9 @@ attach_rural <- function(dt, uic_dt, label = "rural") {
 ## dropping is worse than misclassification: nothing warns you.
 
 FIPS_CHANGES <- data.table(
-  old_fips = c("02261","02261","02270","46113","51515","12025","30113","30113"),
-  new_fips = c("02063","02066","02158","46102","51019","12086","30067","30031"),
-  kind     = c("split","split","rename","rename","absorbed","rename","split","split"),
+  old_fips = c("02261","02261","02270","46113","51515","12025","30113","30113","51780"),
+  new_fips = c("02063","02066","02158","46102","51019","12086","30067","30031","51083"),
+  kind     = c("split","split","rename","rename","absorbed","rename","split","split","absorbed"),
   note = c(
     "Valdez-Cordova Census Area AK dissolved 2019 -> Chugach Census Area",
     "Valdez-Cordova Census Area AK dissolved 2019 -> Copper River Census Area",
@@ -468,7 +468,8 @@ FIPS_CHANGES <- data.table(
     "Bedford (independent city) VA reverted to town 2013 -> Bedford County",
     "Dade County FL renamed 1997 -> Miami-Dade County",
     "Yellowstone National Park County MT abolished 1997 -> Park County",
-    "Yellowstone National Park County MT abolished 1997 -> Gallatin County"
+    "Yellowstone National Park County MT abolished 1997 -> Gallatin County",
+    "South Boston (independent city) VA reverted to town 1995 -> Halifax County"
   )
 )
 
