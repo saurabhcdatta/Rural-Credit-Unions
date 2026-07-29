@@ -203,6 +203,53 @@ load_panel <- function(dir, cache = file.path(dir, "_stacked_panel.rds"),
 }
 
 ## ---------------------------------------------------------------------------
+## BRIDGED SERIES ACROSS SCHEDULE BREAKS
+## ---------------------------------------------------------------------------
+## The 2017-18 Call Report revision replaced member-business-loan reporting
+## with commercial-loan reporting. Each pair below is 0% missing before the
+## handoff and 100% after, so neither field alone spans the panel.
+##
+## USE WITH CARE. The two concepts are related but NOT identical -- commercial
+## loans are a supervisory category, member business loans a statutory one, and
+## the populations differ at the edges. A bridged series is fine for a trend
+## exhibit with the seam marked; it is NOT a substitute for the statutory
+## measure in the MBL cap analysis.
+##
+## For anything touching the 12 U.S.C. 1757a cap, use lns_mbl_part723, which
+## has complete coverage 2010-2026 and needs no bridging at all.
+
+BRIDGE_PAIRS <- list(
+  mbl_bridged = c(old = "lns_mbl", new = "lns_comm", handoff = "2018"),
+  dq_bridged  = c(old = "dq_mbl",  new = "dq_comm",  handoff = "2019")
+)
+
+bridge_series <- function(cr, pairs = BRIDGE_PAIRS, verbose = TRUE) {
+  for (nm in names(pairs)) {
+    p <- pairs[[nm]]
+    if (!all(c(p["old"], p["new"]) %in% names(cr))) {
+      warning("Skipping ", nm, ": source fields absent", call. = FALSE); next
+    }
+    h <- as.integer(p["handoff"])
+    cr[, (nm) := fifelse(year < h, get(p["old"]), get(p["new"]))]
+    cr[, (paste0(nm, "_src")) := fifelse(year < h, "pre-revision", "post-revision")]
+
+    if (verbose) {
+      ## Level shift at the seam is the thing to inspect. A large jump means
+      ## the two concepts are not comparable and the series should be shown
+      ## as two segments, not one line.
+      w <- cr[year %in% c(h - 2, h - 1, h, h + 1),
+              .(n = .N, median = median(get(nm), na.rm = TRUE),
+                pct_nonmissing = round(100 * mean(!is.na(get(nm)))) ), by = year][order(year)]
+      cat("\n--- ", nm, " (", p["old"], " -> ", p["new"], " at ", h, ") ---\n", sep = "")
+      print(w)
+      cat("Check the median across the seam. A large step means the concepts\n")
+      cat("differ materially -- plot as two segments rather than one series.\n")
+    }
+  }
+  cr[]
+}
+
+## ---------------------------------------------------------------------------
 ## Full preparation
 ## ---------------------------------------------------------------------------
 prep_panel <- function(panel_dir,
