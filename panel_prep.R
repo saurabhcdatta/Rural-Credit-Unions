@@ -245,8 +245,14 @@ prep_panel <- function(panel_dir,
   diagnose_unmatched(cr)
   unmatched <- cr[is.na(rural), .N]
   if (unmatched) {
+    ## Write the dropped rows out before discarding them -- otherwise they
+    ## cannot be inspected afterwards, which is exactly when you want to.
+    drop_file <- file.path(panel_dir, "_dropped_unclassified.csv")
+    fwrite(cr[is.na(rural), .(cu_number, year, quarter, fips, state, city,
+                              zip_code_char5, assets_tot)], drop_file)
     message("Dropping ", unmatched, " CU-quarters (",
             round(100 * unmatched / nrow(cr), 2), "%) with no rural classification")
+    message("  dropped rows written to ", drop_file, " for inspection")
     cr <- cr[!is.na(rural)]
   }
 
