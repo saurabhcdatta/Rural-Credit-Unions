@@ -457,9 +457,9 @@ attach_rural <- function(dt, uic_dt, label = "rural") {
 ## dropping is worse than misclassification: nothing warns you.
 
 FIPS_CHANGES <- data.table(
-  old_fips = c("02261","02261","02270","46113","51515","12025","30113","30113","51780"),
-  new_fips = c("02063","02066","02158","46102","51019","12086","30067","30031","51083"),
-  kind     = c("split","split","rename","rename","absorbed","rename","split","split","absorbed"),
+  old_fips = c("02261","02261","02270","46113","51515","12025","30113","51780"),
+  new_fips = c("02063","02066","02158","46102","51019","12086","30067","51083"),
+  kind     = c("split","split","rename","rename","absorbed","rename","resolved","absorbed"),
   note = c(
     "Valdez-Cordova Census Area AK dissolved 2019 -> Chugach Census Area",
     "Valdez-Cordova Census Area AK dissolved 2019 -> Copper River Census Area",
@@ -467,8 +467,11 @@ FIPS_CHANGES <- data.table(
     "Shannon County SD renamed 2015 -> Oglala Lakota County",
     "Bedford (independent city) VA reverted to town 2013 -> Bedford County",
     "Dade County FL renamed 1997 -> Miami-Dade County",
-    "Yellowstone National Park County MT abolished 1997 -> Park County",
-    "Yellowstone National Park County MT abolished 1997 -> Gallatin County",
+    paste("Yellowstone National Park County MT abolished 1997, split between Park",
+          "(30067, UIC 6, RURAL) and Gallatin (30031, UIC 4, small metro, NOT rural).",
+          "Assigned to Park: the settled Montana portion of the park (Gardiner,",
+          "Mammoth) lies in Park County. JUDGMENT CALL -- document it; it flips the",
+          "rural flag for the affected institutions."),
     "South Boston (independent city) VA reverted to town 1995 -> Halifax County"
   )
 )
@@ -500,7 +503,7 @@ ct_matters <- function(u2013, u2024) {
 harmonize_fips <- function(x, fips_col = "fips", uic24 = NULL) {
   x <- copy(x)
 
-  one <- FIPS_CHANGES[kind != "split"]
+  one <- FIPS_CHANGES[kind != "split"]   # rename / absorbed / resolved are all 1:1
   n_hit <- x[get(fips_col) %in% one$old_fips, .N]
   if (n_hit) x[one, on = setNames("old_fips", fips_col), (fips_col) := i.new_fips]
   message("Harmonized ", n_hit, " rows on renamed/absorbed FIPS")
