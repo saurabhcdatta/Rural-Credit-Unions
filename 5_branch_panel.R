@@ -61,9 +61,13 @@ setnames(xw_raw, tolower(gsub("[^A-Za-z0-9]+", "_", names(xw_raw))))
 names(xw_raw)                                             ## LOOK
 nm_cols <- grep("^countyname[0-9]*$", names(xw_raw), value = TRUE)
 nm_cols                                                   ## LOOK -- countyname .. countyname5
-xw_raw[1:3, c("state", "statecty", nm_cols), with = FALSE]  ## LOOK -- the variants
 
+## Resolve the FIPS column by pattern, not by literal name: this crosswalk
+## calls it statecty_fips2, other builds call it statecty.
 fp <- grep("^statecty", names(xw_raw), value = TRUE)[1]
+fp                                                        ## LOOK -- which one matched
+xw_raw[1:3, c("state", fp, nm_cols), with = FALSE]        ## LOOK -- the variants
+
 xw_raw[, fips := sprintf("%05d", as.integer(get(fp)))]
 
 ## long: one row per (level, state, name key) -> fips
