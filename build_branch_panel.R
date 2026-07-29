@@ -174,9 +174,15 @@ scan_branch_sources <- function(dir) {
 ## ---------------------------------------------------------------------------
 read_branch_file <- function(path, inside_zip = NULL) {
   con <- if (is.null(inside_zip)) path else unz(path, inside_zip)
+  ## fill = TRUE is required: the 2013Q2 file (5300Data0613Final.zip) has rows
+  ## with 23 fields against a 22-field header, and without it fread stops early
+  ## and silently returns a THIRD of the quarter. Check the site count per
+  ## quarter after loading -- a quarter far below its neighbours means a parse
+  ## failure, not a real collapse in branch counts.
   x <- tryCatch(fread(if (is.null(inside_zip)) path else
                         paste(readLines(con, warn = FALSE), collapse = "\n"),
-                      colClasses = "character", showProgress = FALSE),
+                      colClasses = "character", showProgress = FALSE,
+                      fill = TRUE),
                 error = function(e) NULL)
   if (is.null(x) || !nrow(x)) return(NULL)
   setnames(x, tolower(gsub("[^A-Za-z0-9]+", "_", names(x))))
@@ -201,14 +207,14 @@ read_branch_file <- function(path, inside_zip = NULL) {
     state  = physicaladdressstatecode,
     zip5   = sprintf("%05d", suppressWarnings(as.integer(substr(physicaladdresspostalcode, 1, 5)))),
     county_name = trimws(get(cty)),
-    country = physicaladdresscountry,
-    atm       = get0("atm", ifnotfound = NA) %||% NA,
-    memberserv = get0("memberservices", ifnotfound = NA) %||% NA)]
+    country = physicaladdresscountry)]
 
-  ## flag columns exist in most vintages but not all
-  for (f in c("atm","driveThru","memberservices","shrd_serv_cntr_net")) {
-    fl <- grep(paste0("^", tolower(f), "$"), names(x), value = TRUE)
-    if (length(fl)) d[, (tolower(f)) := as.integer(x[[fl]])]
+  ## Flag columns (ATM, DriveThru, MemberServices, shared branching) exist in
+  ## most vintages but not all -- added only where present, and before the
+  ## row filter below so lengths line up with x.
+  for (f in c("atm", "drivethru", "memberservices", "shrd_serv_cntr_net")) {
+    fl <- grep(paste0("^", f, "$"), names(x), value = TRUE)
+    if (length(fl)) d[, (f) := suppressWarnings(as.integer(x[[fl[1]]]))]
   }
 
   d[, `:=`(year    = as.integer(format(cycle_date, "%Y")),
@@ -404,6 +410,25 @@ attach_site_rural <- function(b, uic24, uic13 = NULL, xw, zcta_file = NULL) {
     }
   }
 
+  ## Connecticut, part two: quarters BEFORE 2022 use the old county names
+  ## (Hartford, Fairfield, New Haven...). Those resolve to old county FIPS,
+  ## which the 2024 UIC does not contain, so they fall out at the rural join
+  ## rather than at the name match. Same evidence as resolve_ct() in
+  ## panel_prep.R: no Connecticut geography is rural under either vintage, so
+  ## the mismatch cannot alter any site's rural status.
+  ct_rural_24 <- uic24[substr(fips, 1, 2) == "09", sum(rural)]
+  ct_rural_13 <- if (!is.null(uic13)) uic13[substr(fips, 1, 2) == "09", sum(rural)] else 0L
+  if (ct_rural_24 == 0L && ct_rural_13 == 0L) {
+    n_ct <- b[state == "CT" & is.na(fips), .N]
+    b[state == "CT" & is.na(fips), fips_src := "CT (pre-2022 counties)"]
+    cat("  CT pre-2022 county names: ", n_ct,
+        " site-quarters -- assigned non-rural (no CT geography is rural\n",
+        "    under either vintage; documented, not imputed)\n", sep = "")
+  } else {
+    warning("Connecticut HAS rural geography -- the pre-2022 county names need ",
+            "a real planning-region crosswalk.", call. = FALSE)
+  }
+
   ## ZIP fallback, unambiguous ZIPs only
   if (!is.null(zcta_file) && b[is.na(fips) & !foreign & !territory, .N]) {
     z <- fread(zcta_file, colClasses = "character"); setnames(z, tolower(names(z)))
@@ -429,6 +454,12 @@ attach_site_rural <- function(b, uic24, uic13 = NULL, xw, zcta_file = NULL) {
   ## Rural on a FIXED 2024 vintage, so a flip means the site actually moved
   b[uic24[, .(fips, r = rural)], on = "fips", rural_site := i.r]
   if (!is.null(uic13)) b[uic13[, .(fips, r = rural)], on = "fips", rural_site_2013 := i.r]
+
+  ## apply the Connecticut determination after the join
+  if (ct_rural_24 == 0L && ct_rural_13 == 0L) {
+    b[state == "CT" & is.na(rural_site), rural_site := 0L]
+    if (!is.null(uic13)) b[state == "CT" & is.na(rural_site_2013), rural_site_2013 := 0L]
+  }
   b[, ckey := NULL]
 
   cat("\nMatch by source:\n")
@@ -508,7 +539,15 @@ cu_branch_timeseries <- function(b) {
 ## SiteId is stable across quarters, which is what makes this possible. A site
 ## that appears is an opening; one that disappears is a closing; one whose
 ## county changes has MOVED -- because the rural vintage is held fixed.
-branch_events <- function(b) {
+## start_q defaults to 2012Q1. The branch table was introduced in Sep-2010 and
+## populated over its first year -- site counts run ~19,000 in 2010, 22,800 by
+## 2011Q1 -- so "openings" before 2012 are reporting coverage catching up, not
+## branches being built. Including them would put a spurious opening spike at
+## the start of every access series.
+branch_events <- function(b, start_q = 2012 * 4L + 1L) {
+  b <- b[qidx >= start_q]
+  cat("\nEvent window starts ", start_q %/% 4L, "Q", start_q %% 4L,
+      " (excluding the 2010-11 reporting ramp-up)\n", sep = "")
   s <- b[!foreign & !territory, .(cu_number, site_id, qidx, year, quarter, fips, rural_site)]
   setorder(s, cu_number, site_id, qidx)
   allq <- sort(unique(s$qidx))
