@@ -12,3 +12,10 @@ cap[, .(cus = uniqueN(cu_number),
         median_sustainable = round(median(g_sust, na.rm = TRUE), 2),
         pct_above_sustainable = round(100 * mean(binding), 1)),
     by = .(seg = fifelse(rural == 1L, "Rural", "Urban"))]
+
+cap[, .(cus = uniqueN(cu_number),
+        median_actual = round(median(g_assets, na.rm = TRUE), 2),
+        median_sustainable = round(median(g_sust, na.rm = TRUE), 2),
+        pct_above_sustainable = round(100 * mean(binding), 1)),
+    by = .(seg = fifelse(rural == 1L, "Rural", "Urban"),
+           status = fifelse(lid == 1L, "LID (can take secondary capital)", "Not LID"))][order(seg, status)]
