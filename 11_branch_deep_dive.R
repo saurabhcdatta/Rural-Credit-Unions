@@ -168,10 +168,13 @@ cat("the choice affects only the level -- which is the defensible position.\n")
 ## comparison: one map, held fixed, first quarter against last. Reporting the
 ## RANGE across vintages is more defensible than picking one and hoping the
 ## question is not asked.
+## The vintage label is a constant, so it is tagged on AFTER the aggregation --
+## data.table requires every item in `by` to have the same length as the data.
 both <- rbindlist(lapply(c("2013 codes", "2024 codes"), function(v) {
   rc <- if (v == "2013 codes") "rural_site_2013" else "rural_site"
-  bb[qidx %in% c(QA, QZ), .(offices = .N),
-     by = .(qidx, vintage = v, seg = fifelse(get(rc) == 1L, "Rural", "Urban"))]
+  x  <- bb[qidx %in% c(QA, QZ), .(offices = .N),
+           by = .(qidx, seg = fifelse(get(rc) == 1L, "Rural", "Urban"))]
+  x[, vintage := v][]
 }))
 both <- dcast(both, vintage + seg ~ qidx, value.var = "offices")
 setnames(both, as.character(c(QA, QZ)), c("start", "end"))
