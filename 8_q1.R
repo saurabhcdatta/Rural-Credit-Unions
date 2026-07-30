@@ -206,8 +206,14 @@ fwrite(bal, file.path(OUT_DIR, "q1_balanced_panel_check.csv"))
 
 PV <- c("g_assets", "networth_pct", "roa_pct")
 
-rr <- est[rural == 1L, c(.(qidx, ln_assets, cu_number, assets_tot), .SD), .SDcols = PV]
-nn <- est[rural == 0L, c(.(qidx, ln_assets, nl = ln_assets, n_cu = cu_number), .SD), .SDcols = PV]
+## Name every column explicitly: inside c(.(...), .SD) data.table does NOT
+## auto-name from the deparsed expression, so bare `qidx` arrives as V1.
+rr <- est[rural == 1L, c(list(qidx = qidx, ln_assets = ln_assets,
+                             cu_number = cu_number, assets_tot = assets_tot), .SD),
+          .SDcols = PV]
+nn <- est[rural == 0L, c(list(qidx = qidx, ln_assets = ln_assets,
+                             nl = ln_assets, n_cu = cu_number), .SD),
+          .SDcols = PV]
 setnames(nn, PV, paste0("n_", PV))
 setkey(nn, qidx, ln_assets)
 
