@@ -68,8 +68,20 @@ if (!"foreign" %in% names(b))
 if (!"territory" %in% names(b))
   b[, territory := state %in% c("GU","VI","AS","MP","FM","MH","PW")]
 
-need <- c("qidx", "rural_site", "rural_site_2013", "main_office", "fips",
-          "cu_number", "site_id")
+## Column aliases. 5_ names things slightly differently depending on how it
+## was written (rural_site_13 vs rural_site_2013, q vs quarter). Add aliases
+## rather than rename, so nothing downstream of this script breaks.
+if (!"rural_site_2013" %in% names(b)) {
+  alt <- setdiff(grep("^rural_site_?(13|2013)$", names(b), value = TRUE), "rural_site")
+  if (length(alt)) {
+    b[, rural_site_2013 := get(alt[1])]
+    message("aliased '", alt[1], "' -> rural_site_2013")
+  }
+}
+if (!"quarter" %in% names(b) && "q" %in% names(b)) b[, quarter := q]
+
+need <- c("qidx", "quarter", "rural_site", "rural_site_2013", "main_office",
+          "fips", "cu_number", "site_id")
 miss <- setdiff(need, names(b))
 if (length(miss))
   stop("branch panel is missing: ", paste(miss, collapse = ", "),
