@@ -193,7 +193,56 @@ cat("\nCoefficients close to the full-sample ones => survivorship is not\n",
 fwrite(hz,  file.path(OUT_DIR, "q1_survival_hazard.csv"))
 fwrite(bal, file.path(OUT_DIR, "q1_balanced_panel_check.csv"))
 
-## ---- 8.8 read-out -----------------------------------------------------------
+## ---- 8.8 size-matched pairs -- the executive-legible version ----------------
+## Everything above controls for size statistically. This does it literally:
+## pair each rural credit union with the non-rural credit union closest to it in
+## size, IN THE SAME QUARTER, keep only pairs within 10% on assets, and average
+## the difference. No model, no functional form, no coefficients -- just
+## like-for-like pairs.
+##
+## For a non-technical audience this is the one to show. "We matched each rural
+## credit union to a non-rural credit union of almost identical size in the same
+## quarter, and compared them" needs no explanation of what a control variable is.
+
+PV <- c("g_assets", "networth_pct", "roa_pct")
+
+rr <- est[rural == 1L, c(.(qidx, ln_assets, cu_number, assets_tot), .SD), .SDcols = PV]
+nn <- est[rural == 0L, c(.(qidx, ln_assets, nl = ln_assets, n_cu = cu_number), .SD), .SDcols = PV]
+setnames(nn, PV, paste0("n_", PV))
+setkey(nn, qidx, ln_assets)
+
+## rolling join on size within quarter: nearest non-rural neighbour
+mp <- nn[rr, on = .(qidx, ln_assets), roll = "nearest"]
+mp[, size_gap := abs(nl - ln_assets)]          # log difference in assets
+
+CAL <- log(1.10)                                # 10% caliper
+mpk <- mp[size_gap <= CAL]
+
+cat("\n--- size-matched pairs ---\n")
+cat("rural CU-quarters:            ", nrow(mp), "\n", sep = "")
+cat("matched within 10% on assets: ", nrow(mpk),
+    "  (", round(100 * nrow(mpk) / nrow(mp), 1), "%)\n", sep = "")
+cat("median size difference in a matched pair: ",
+    round(100 * (exp(mpk[, median(size_gap)]) - 1), 2), "%\n\n", sep = "")
+
+matched <- rbindlist(lapply(PV, function(v) {
+  d <- mpk[!is.na(get(v)) & !is.na(get(paste0("n_", v)))]
+  diff <- d[[v]] - d[[paste0("n_", v)]]
+  tt <- t.test(diff)
+  data.table(outcome = v, pairs = length(diff),
+             rural_mean = mean(d[[v]]), matched_nonrural_mean = mean(d[[paste0("n_", v)]]),
+             difference = mean(diff), ci_lo = tt$conf.int[1], ci_hi = tt$conf.int[2],
+             p = tt$p.value)
+}))
+matched                                                     ## LOOK
+
+cat("\nCompare `difference` here with the regression coefficients in 8.3.\n")
+cat("If the two agree, the finding does not depend on any modelling choice --\n")
+cat("which is the point worth making to a non-technical audience.\n")
+
+fwrite(matched, file.path(OUT_DIR, "q1_size_matched_pairs.csv"))
+
+## ---- 8.9 read-out -----------------------------------------------------------
 cat("\n", strrep("=", 70), "\n  Q1: is 'rural' different from 'small'?\n", strrep("=", 70), "\n", sep = "")
 cat("\nShare of raw gap surviving conditioning:\n"); print(shrink[, .(outcome, pct_surviving)])
 cat("\nShare of gap unexplained by observables:\n");  print(D[, .(outcome, pct_unexplained)])
