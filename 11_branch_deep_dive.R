@@ -60,6 +60,21 @@ sv <- function(p, nm, w = 9, h = 5) {
 ## first year, so earlier "openings" are reporting coverage catching up.
 ## Require BOTH vintages classified, so the two series cover identical sites.
 Q0 <- 2013 * 4L + 1L
+
+## Derive the exclusion flags if 5_ did not persist them. Doing this here rather
+## than assuming keeps the script independent of how the branch panel was built.
+if (!"foreign" %in% names(b))
+  b[, foreign := !is.na(country) & nzchar(country) & country != "United States"]
+if (!"territory" %in% names(b))
+  b[, territory := state %in% c("GU","VI","AS","MP","FM","MH","PW")]
+
+need <- c("qidx", "rural_site", "rural_site_2013", "main_office", "fips",
+          "cu_number", "site_id")
+miss <- setdiff(need, names(b))
+if (length(miss))
+  stop("branch panel is missing: ", paste(miss, collapse = ", "),
+       "\n  columns present: ", paste(names(b), collapse = ", "), call. = FALSE)
+
 bb <- b[!foreign & !territory & qidx >= Q0 &
         !is.na(rural_site) & !is.na(rural_site_2013)]
 
