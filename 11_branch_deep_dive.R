@@ -163,6 +163,31 @@ print(dcast(trend_cmp, vintage ~ qidx, value.var = "idx"))
 cat("If these two end-points are close, the trend is robust to the vintage and\n")
 cat("the choice affects only the level -- which is the defensible position.\n")
 
+## ---- 11.3a the headline change under BOTH vintages, both segments ----------
+## The table to put in the report. Each row is a self-contained apples-to-apples
+## comparison: one map, held fixed, first quarter against last. Reporting the
+## RANGE across vintages is more defensible than picking one and hoping the
+## question is not asked.
+both <- rbindlist(lapply(c("2013 codes", "2024 codes"), function(v) {
+  rc <- if (v == "2013 codes") "rural_site_2013" else "rural_site"
+  bb[qidx %in% c(QA, QZ), .(offices = .N),
+     by = .(qidx, vintage = v, seg = fifelse(get(rc) == 1L, "Rural", "Urban"))]
+}))
+both <- dcast(both, vintage + seg ~ qidx, value.var = "offices")
+setnames(both, as.character(c(QA, QZ)), c("start", "end"))
+both[, `:=`(change = end - start, pct = round(100 * (end / start - 1), 1))]
+setorder(both, seg, vintage)
+cat("\n=== T4a. Office change under BOTH vintages -- the robustness table ===\n")
+print(both)
+
+rng <- both[, .(lo = min(pct), hi = max(pct)), by = seg]
+cat("\nRural offices grew ", rng[seg == "Rural", lo], "% to ", rng[seg == "Rural", hi],
+    "% depending on vintage; urban ", rng[seg == "Urban", lo], "% to ",
+    rng[seg == "Urban", hi], "%.\n", sep = "")
+cat("Report the RANGE, not a point estimate -- it pre-empts the objection\n")
+cat("rather than inviting it.\n")
+fwrite(both, file.path(BD_DIR, "T4a_change_both_vintages.csv"))
+
 F3 <- ggplot(vv, aes(qidx, idx, colour = vintage, linetype = vintage)) +
   geom_hline(yintercept = 100, colour = "#C6CFD8") +
   geom_line(linewidth = .8) +
