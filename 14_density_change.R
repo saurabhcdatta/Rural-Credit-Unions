@@ -119,24 +119,66 @@ theme_chart <- function(base = 12) {
 ## TRAP: the branch file has no CU_TYPE. FOICU supplies it on JOIN_NUMBER. You
 ## need the FOICU for BOTH quarters or the two years are different universes.
 
+## COLUMN NAMES DIFFER BETWEEN VINTAGES. The 2026Q1 file calls the county
+## PhysicalAddressCountyName2; the 2016Q1 file calls it PhysicalAddressCountyName.
+## Nothing else is guaranteed either, so resolve every field we depend on by
+## pattern and print what was matched. Hardcoding a name here fails silently on
+## whichever quarter you did not test against.
+pick_col <- function(DT, patterns, what, required = TRUE) {
+  nm <- names(DT)
+  for (p in patterns) {
+    hit <- grep(p, nm, ignore.case = TRUE, value = TRUE)
+    if (length(hit)) {
+      ## Prefer the shortest match, so "...CountyName" wins over
+      ## "...CountyNameSomethingElse" when a vintage carries both.
+      hit <- hit[order(nchar(hit))]
+      if (length(hit) > 1L)
+        message(sprintf("    [%s] %d candidates (%s) -> using '%s'",
+                        what, length(hit), paste(hit, collapse = ", "), hit[1]))
+      return(hit[1])
+    }
+  }
+  if (required)
+    stop(sprintf("Cannot resolve '%s'. Tried: %s\nColumns present: %s",
+                 what, paste(patterns, collapse = " | "), paste(nm, collapse = ", ")))
+  NA_character_
+}
+
 read_offices <- function(branch_file, foicu_file, label) {
   stopifnot(file.exists(branch_file), file.exists(foicu_file))
   b <- fread(branch_file, colClasses = "character", encoding = "Latin-1",
              fill = TRUE, showProgress = FALSE)
   f <- fread(foicu_file,  colClasses = "character", encoding = "Latin-1",
              fill = TRUE, showProgress = FALSE)
-  f[, `:=`(join = as.integer(JOIN_NUMBER), cu_type = as.integer(CU_TYPE))]
+
+  cat(sprintf("[%s] resolving branch-file columns:\n", label))
+  C <- list(
+    cu     = pick_col(b, c("^CU_NUMBER$", "^CU_NUM"),                    "cu number"),
+    join   = pick_col(b, c("^JOIN_NUMBER$", "^JOIN_NUM"),                "join number"),
+    county = pick_col(b, c("^PhysicalAddressCountyName", "CountyName",
+                           "^County$"),                                  "county name"),
+    state  = pick_col(b, c("^PhysicalAddressStateCode$", "^PhysicalAddressState",
+                           "^StateCode$"),                               "state code"),
+    hq     = pick_col(b, c("^MainOffice$", "MainOffice"),                "main office flag"))
+  cat(sprintf("    county = %s | state = %s | hq = %s\n", C$county, C$state, C$hq))
+
+  fj <- pick_col(f, c("^JOIN_NUMBER$", "^JOIN_NUM"), "FOICU join number")
+  ft <- pick_col(f, c("^CU_TYPE$", "^CUTYPE$"),      "FOICU cu type")
+  f[, `:=`(join = as.integer(get(fj)), cu_type = as.integer(get(ft)))]
   stopifnot(!any(duplicated(f$join)))
 
-  b[, join := as.integer(JOIN_NUMBER)]
+  b[, join := as.integer(get(C$join))]
   n_all <- nrow(b)
   b <- merge(b, f[, list(join, cu_type)], by = "join", all.x = TRUE)
   n_nomatch <- sum(is.na(b$cu_type))
   b <- b[cu_type %in% CU_TYPES_KEEP]
 
-  b[, `:=`(state      = toupper(trimws(PhysicalAddressStateCode)),
-           county_raw = trimws(PhysicalAddressCountyName2),
-           is_hq      = as.integer(MainOffice == "Yes"))]
+  b[, `:=`(CU_NUMBER  = get(C$cu),
+           state      = toupper(trimws(get(C$state))),
+           county_raw = trimws(get(C$county)),
+           is_hq      = as.integer(toupper(trimws(get(C$hq))) %in% c("YES", "Y", "1", "TRUE")))]
+  if (sum(b$is_hq) == 0L)
+    warning("[", label, "] no headquarters found - check the values in ", C$hq)
   cat(sprintf("[%s] %s site rows -> %s after CU_TYPE filter (%d unmatched in FOICU); %s headquarters\n",
               label, comma(n_all), comma(nrow(b)), n_nomatch, comma(sum(b$is_hq))))
   b[]
@@ -607,7 +649,9 @@ print(head(movers[order(-pc_den), list(fips, off_0, off_T, pop_0, pop_T, pc_off,
 ## been added, the sector is a mid-century artifact being slowly amortised.
 
 fT <- fread(FOICU_T, colClasses = "character", encoding = "Latin-1", fill = TRUE)
-fT[, `:=`(cu_type = as.integer(CU_TYPE), yr = as.integer(YEAR_OPENED))]
+fT[, `:=`(cu_type = as.integer(get(pick_col(fT, c("^CU_TYPE$", "^CUTYPE$"), "cu type"))),
+          yr      = as.integer(get(pick_col(fT, c("^YEAR_OPENED$", "YEAR_OPEN"), "year opened"))),
+          CU_NUMBER = get(pick_col(fT, c("^CU_NUMBER$", "^CU_NUM"), "cu number")))]
 hq_map <- unique(off_T[is_hq == 1, list(CU_NUMBER, fips)])
 fT <- merge(fT, hq_map, by = "CU_NUMBER", all.x = TRUE)
 fT <- merge(fT, D[, list(fips, rural)], by = "fips", all.x = TRUE)
