@@ -617,13 +617,17 @@ ggsave(file.path(OUT_DIR, "density_change.png"),              m_change, width = 
 ## with shade carrying the population direction, so the eye reads the office
 ## dimension first and demography second - the order the argument runs.
 
+## The two NEUTRAL classes must be clearly different from each other. Between
+## them, "Offices unchanged" and "No offices in either year" are more than half
+## of all counties; rendered three shades apart they read as one cream blob and
+## the map says nothing about the majority of the country.
 REGIME_COLS <- c(
   "Offices up, population down"   = "#0E4C55",   # the headline case, darkest
   "Offices up, population up"     = "#7FB0AE",
-  "Offices unchanged"             = "#EDEAE3",
+  "Offices unchanged"             = "#D9D3C4",   # warm sand - clearly a colour
   "Offices down, population down" = "#E3A08F",
   "Offices down, population up"   = "#A8341F",   # offices lost in a growing county
-  "No offices in either year"     = "#F6F5F2")
+  "No offices in either year"     = "#FBFBFA")   # near-white - clearly absence
 
 ## A few named annotations. CHECK THESE BEFORE PRESENTING - a county that gained
 ## three offices because one merger reclassified a headquarters as a branch is
@@ -657,6 +661,13 @@ m_regime <- ggplot() +
   theme_map()
 ggsave(file.path(OUT_DIR, "regime_map.png"), m_regime, width = 13, height = 8.8, dpi = 300, bg = "white")
 
+## CHECK THE ANNOTATIONS. A county that gained three offices because one merger
+## reclassified a headquarters as a branch is not a story to put in front of a
+## senior executive. Inspect these before the map leaves the building.
+ann_chk <- merge(as.data.table(st_drop_geometry(MG))[fips %in% label_fips, list(fips, NAME)],
+                 D[, list(fips, off_0, off_T, pop_0, pop_T, pc_pop)], by = "fips")
+cat("\n--- Counties labelled on the regime map ---\n"); print(ann_chk)
+
 ## Companion: a stacked bar, not a second map. Same information, less to read.
 comp <- D[!is.na(rural) & !is.na(regime6), list(n = .N), by = list(regime6, rural)]
 comp[, share := 100 * n / sum(n), by = regime6]
@@ -681,32 +692,59 @@ m_comp <- ggplot(comp, aes(y = factor(regime6, levels = rev(regime_levels)),
         axis.text.y = element_text(colour = PAL$ink, size = 10.5))
 ggsave(file.path(OUT_DIR, "regime_composition.png"), m_comp, width = 10, height = 6, dpi = 300, bg = "white")
 
-## ---- 14.9  quadrant scatter and aggregate decomposition bar ----------------
+## ---- 14.9  scatter and aggregate decomposition bar -------------------------
 ## The scatter answers "how much and why"; the regime map answered "where".
+##
+## NOTE ON THE DESIGN. The first version plotted office change against
+## population change with a 45-degree reference line. That fails in practice:
+## office change spans 300 points and population change 100, so the diagonal
+## renders at roughly 20 degrees and the subtitle describes a line the reader
+## cannot see. Plotting the DENSITY change directly puts the same information
+## on a horizontal zero line, which is unambiguous at any aspect ratio.
 
-S <- D[!is.na(rural) & !is.na(g_off) & pop_T >= 5000]
+S <- D[!is.na(rural) & !is.na(pc_den) & pop_T >= 5000 & off_0 > 0]
 S[, grp := factor(ifelse(rural == 1, "Rural county", "Non-rural county"),
-                  levels = c("Rural county", "Non-rural county"))]
+                  levels = c("Non-rural county", "Rural county"))]
+setorder(S, grp)          # rural drawn last, not buried under 1,500 grey points
 
-quad <- ggplot(S, aes(100 * (exp(g_pop) - 1), 100 * (exp(g_off) - 1))) +
-  annotate("rect", xmin = -Inf, xmax = 0, ymin = 0, ymax = Inf, fill = PAL$pale, alpha = 0.45) +
-  geom_hline(yintercept = 0, colour = PAL$ink, linewidth = 0.3) +
-  geom_vline(xintercept = 0, colour = PAL$ink, linewidth = 0.3) +
-  geom_abline(slope = 1, intercept = 0, linetype = "22", colour = PAL$grey, linewidth = 0.35) +
-  geom_point(aes(size = pop_T, colour = grp), alpha = 0.5, stroke = 0) +
-  scale_colour_manual(values = c("Rural county" = PAL$accent, "Non-rural county" = PAL$mid),
-                      name = NULL) +
-  scale_size_area(max_size = 7, guide = "none") +
+Y_CAP <- 200
+n_off_scale <- S[pc_den > Y_CAP, .N]
+S[, y_plot := pmin(pc_den, Y_CAP)]
+q_up_down <- S[rural == 1 & pc_pop < 0 & pc_den > 0, .N]
+
+quad <- ggplot(S, aes(pc_pop, y_plot)) +
+  annotate("rect", xmin = -Inf, xmax = 0, ymin = 0, ymax = Inf,
+           fill = PAL$pale, alpha = 0.5) +
+  annotate("text", x = -38, y = Y_CAP * 0.93, hjust = 0, vjust = 1,
+           label = sprintf("Fewer people, better access\n%d rural counties", q_up_down),
+           size = 3.6, colour = PAL$deep, fontface = "bold", lineheight = 1.1) +
+  geom_hline(yintercept = 0, colour = PAL$ink, linewidth = 0.35) +
+  geom_vline(xintercept = 0, colour = PAL$ink, linewidth = 0.35) +
+  geom_point(aes(size = pop_T, colour = grp), alpha = 0.55, stroke = 0) +
+  scale_colour_manual(values = c("Non-rural county" = "#AEBDC0",
+                                 "Rural county"     = PAL$accent),
+                      name = NULL,
+                      guide = guide_legend(override.aes = list(size = 4, alpha = 1))) +
+  scale_size_area(max_size = 6, guide = "none") +
   scale_x_continuous(labels = label_percent(scale = 1), limits = c(-40, 60)) +
-  scale_y_continuous(labels = label_percent(scale = 1), limits = c(-100, 200)) +
-  labs(title = "Offices and people moved in different directions",
-       subtitle = "Each point is a county, sized by population. Above the dashed 45-degree line, offices grew faster than\npopulation, so access per resident improved. The shaded quadrant is the one that matters: offices added\nin counties that were losing people.",
-       x = sprintf("Change in population, %d to %d", YEAR_0, YEAR_T),
-       y = sprintf("Change in offices, %d to %d", YEAR_0, YEAR_T),
-       caption = "Counties under 5,000 residents excluded from this exhibit. Connecticut excluded. NCUA Office of the Chief Economist.") +
-  theme_chart()
+  scale_y_continuous(labels = label_percent(scale = 1), limits = c(-100, Y_CAP)) +
+  labs(title = "Where offices moved against where people moved",
+       subtitle = paste0(
+         "Each point is a county, sized by population. Above the horizontal line, offices per resident IMPROVED;\n",
+         "left of the vertical line, the county lost people. The shaded quadrant is the one that matters -\n",
+         "better access in places that were emptying out."),
+       x = sprintf("Change in population, %d to %d", POP_0_YEAR, POP_T_YEAR),
+       y = sprintf("Change in offices per 10,000 residents, %dQ1 to %dQ1", YEAR_0, YEAR_T),
+       caption = paste0(
+         sprintf("Counties under 5,000 residents and counties with no offices in %dQ1 are excluded. ", YEAR_0),
+         sprintf("%d counties above +%d%% are plotted at the cap.\n", n_off_scale, Y_CAP),
+         "Connecticut, Puerto Rico and the outlying territories excluded. NCUA Office of the Chief Economist.")) +
+  theme_chart() +
+  theme(legend.position = "top")
 ggsave(file.path(OUT_DIR, "offices_vs_population_scatter.png"), quad,
        width = 11, height = 8, dpi = 300, bg = "white")
+cat(sprintf("\nScatter: %s counties plotted, %d rural in the shaded quadrant, %d above the +%d%% cap\n",
+            comma(nrow(S)), q_up_down, n_off_scale, Y_CAP))
 
 dec <- rbindlist(lapply(c(1, 0), function(r) rbindlist(list(
   data.table(grp = ifelse(r == 1, "Rural", "Non-rural"), part = "Offices",    val = agg[rural == r, pct_off]),
@@ -803,6 +841,8 @@ cat("\nRead this as a SYSTEM fact, not a rural one: the two groups are the same 
 fwrite(age, file.path(OUT_DIR, "charter_age.csv"))
 
 cat("\nAll exhibits written to ", OUT_DIR, "\n", sep = "")
-cat("For the briefing use regime_map.png plus one of\n",
-    "  offices_vs_population_scatter.png / density_decomposition.png.\n",
-    "The two level maps and density_change.png are report material.\n", sep = "")
+cat("BRIEFING:  density_decomposition.png (the opener), regime_map.png +\n",
+    "           regime_composition.png (the geography).\n",
+    "REPORT:    density_2016.png, density_2026.png, offices_vs_population_scatter.png.\n",
+    "DROP:      density_change.png - at county resolution it is confetti, and the\n",
+    "           regime map carries the same information classified.\n", sep = "")
