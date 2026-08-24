@@ -204,9 +204,23 @@ off_T <- read_offices(BRANCH_T, FOICU_T, as.character(YEAR_T))
 ##   ALASKA. Valdez-Cordova Census Area (02261) split in 2019 into Chugach
 ##   (02063) and Copper River (02066). Folded back to 02261 in both series.
 ##
+##   PUERTO RICO. The UIC file classifies PR municipios and the cartographic
+##   file carries their geometry, but the PEP 2010-2019 COUNTY file does not
+##   include PR - it is published as a separate municipio series. In the first
+##   run all 78 municipios therefore fell out silently at the population merge.
+##   DECISION: exclude PR explicitly and count it, rather than letting a
+##   missing denominator do it quietly. This is the same territorial-scope
+##   question sitting open on the work plan; resolve it once, in writing, for
+##   the whole study. Set TERRITORIAL_SCOPE to "states_dc_pr" and supply a PR
+##   population series if the report ends up including it.
+##
 ## Anything else that moved should surface in the unmatched report below.
 
-DROP_STATES <- c("CT", "GU", "VI", "AS", "MP")
+TERRITORIAL_SCOPE <- "states_dc"     # or "states_dc_pr" once PR population is sourced
+DROP_STATES <- c("CT", "GU", "VI", "AS", "MP",
+                 if (TERRITORIAL_SCOPE == "states_dc") "PR")
+DROP_STATEFP <- c("09", "60", "66", "69", "78",
+                  if (TERRITORIAL_SCOPE == "states_dc") "72")
 FIPS_HARMON <- c("02063" = "02261", "02066" = "02261")
 harmonise   <- function(g) ifelse(g %in% names(FIPS_HARMON), FIPS_HARMON[g], g)
 
@@ -314,8 +328,12 @@ p0 <- pick_pop(pop_old, "POPESTIMATE2016")
 ## must then say which year the denominator actually is.
 POP_T_COL <- grep("^POPESTIMATE20(2[0-9])$", names(pop_new), value = TRUE)
 POP_T_COL <- POP_T_COL[length(POP_T_COL)]
-cat("Current-period population column:", POP_T_COL,
-    "  <- put this year in the exhibit captions, not", YEAR_T, "\n")
+POP_T_YEAR <- as.integer(sub("POPESTIMATE", "", POP_T_COL))
+POP_0_YEAR <- 2016L
+cat(sprintf("Population denominators: %d and %d.\n", POP_0_YEAR, POP_T_YEAR))
+if (POP_T_YEAR != YEAR_T)
+  cat(sprintf("  NOTE: offices are %dQ1 but population is %d. Every caption must say so.\n",
+              YEAR_T, POP_T_YEAR))
 pT <- pick_pop(pop_new, POP_T_COL)
 
 p0[, fips := harmonise(fips)]; pT[, fips := harmonise(fips)]
@@ -391,25 +409,41 @@ ucol_f <- pick_col(u, c("^FIPS$", "^fips", "FIPS", "statecty"), "UIC county fips
 ucol_u <- pick_col(u, c("^UIC_2024$", "^UIC$", "^uic", "URBAN.?INFLUENCE"), "UIC code")
 cat(sprintf("  UIC columns: fips = %s | code = %s\n", ucol_f, ucol_u))
 
-rural_map <- u[, list(fips = harmonise(formatC(as.integer(get(ucol_f)), width = 5, flag = "0")),
-                      uic  = as.integer(get(ucol_u)))]
-rural_map <- rural_map[!is.na(uic) & !is.na(fips)]
-rural_map[, rural := as.integer(uic %in% RURAL_UIC_2024)]
+u_rural_raw <- u[, list(fips_raw = formatC(as.integer(get(ucol_f)), width = 5, flag = "0"),
+                        uic      = as.integer(get(ucol_u)))]
+u_rural_raw <- u_rural_raw[!is.na(uic) & !is.na(fips_raw)]
+u_rural_raw[, rural := as.integer(uic %in% RURAL_UIC_2024)]
+u_rural_raw <- unique(u_rural_raw, by = "fips_raw")
+setkey(u_rural_raw, fips_raw)
+
+rural_map <- copy(u_rural_raw)[, list(fips = harmonise(fips_raw), uic, rural)]
 rural_map <- unique(rural_map, by = "fips")
 
-## VALIDATE before using it. The 2024 vintage has nine codes and classifies
-## roughly 3,235 counties and county-equivalents including Puerto Rico and the
-## outlying territories. The project's validated figure is 1,556 rural counties
-## across the 50 states and DC - if the line below does not print 1,556,
-## something is wrong with the file or the column resolution, and nothing
-## downstream should be trusted.
+## VALIDATE before using it. The project's validated figure is 1,556 rural
+## counties across the 50 states and DC. This panel will come in BELOW that by
+## the number of harmonisation folds that collapse two rural units into one:
+## Valdez-Cordova's successors, Chugach (02063) and Copper River (02066), are
+## both rural, so folding them back to 02261 costs exactly one rural county.
+## The expected count is therefore computed, not asserted - if the arithmetic
+## below does not close, something else moved and nothing downstream is safe.
 cat("\n--- UIC 2024 code distribution ---\n")
 print(rural_map[, list(counties = .N), by = uic][order(uic)])
-n_rural_50 <- rural_map[!substr(fips, 1, 2) %in% c("60", "66", "69", "72", "78") &
-                          rural == 1, .N]
-cat(sprintf("Rural counties, 50 states + DC: %d   (expected 1,556)\n", n_rural_50))
-if (n_rural_50 != 1556L)
-  warning("Rural county count does not match the validated 1,556 - check the UIC file before proceeding.")
+
+RURAL_VALIDATED <- 1556L
+in_50dc <- function(f) !substr(f, 1, 2) %in% c("60", "66", "69", "72", "78")
+n_rural_pre  <- u_rural_raw[in_50dc(fips_raw) & rural == 1, .N]
+n_rural_50   <- rural_map[in_50dc(fips) & rural == 1, .N]
+fold_rural   <- n_rural_pre - n_rural_50
+expected_rural <- RURAL_VALIDATED - fold_rural
+
+cat(sprintf("Rural counties, 50 states + DC: %d\n", n_rural_50))
+cat(sprintf("  ERS file gives %d before harmonisation; %d lost to FIPS folds (%s)\n",
+            n_rural_pre, fold_rural,
+            paste(names(FIPS_HARMON), "->", unlist(FIPS_HARMON), collapse = ", ")))
+cat(sprintf("  validated baseline %d, so expected %d\n", RURAL_VALIDATED, expected_rural))
+if (n_rural_pre != RURAL_VALIDATED)
+  warning("Pre-harmonisation rural count is ", n_rural_pre, ", not the validated ",
+          RURAL_VALIDATED, " - check the UIC file and column resolution.")
 rural_map <- rural_map[, list(fips, rural)]
 
 D <- Reduce(function(a, b) merge(a, b, by = "fips", all = TRUE),
@@ -515,8 +549,7 @@ fwrite(reg, file.path(OUT_DIR, "regime_counts.csv"))
 ## them for the report; use 14.8 and 14.9 in the briefing.
 
 cty_sf$fips <- harmonise(cty_sf$GEOID)
-geom <- cty_sf[!cty_sf$STATEFP %in% c("60", "66", "69", "78"), ]
-geom <- geom[!geom$STATEFP %in% st_dt[stusps == "CT", statefp], ]
+geom <- cty_sf[!cty_sf$STATEFP %in% DROP_STATEFP, ]
 geom <- tigris::shift_geometry(geom, geoid_column = "GEOID")
 states_g <- tigris::shift_geometry(st_sf[!st_sf$STUSPS %in% DROP_STATES, ],
                                    geoid_column = "GEOID")
@@ -531,11 +564,14 @@ dens_bins <- function(v) cut(v, breaks = c(-Inf, 0, 1, 2, 4, 8, Inf),
 MG$b0 <- dens_bins(MG$dens_0); MG$bT <- dens_bins(MG$dens_T)
 
 CAP_BASE <- paste0(
-  "Offices = headquarters and branches, charter types 1 and 2. Population: Census county population estimates.\n",
-  "Connecticut excluded (counties replaced by planning regions in 2022). Alaska, Hawaii and Puerto Rico rescaled and inset.\n",
-  "NCUA Office of the Chief Economist.")
+  sprintf("Offices = headquarters and branches, charter types 1 and 2, %dQ1 and %dQ1. Population: Census county estimates for %d and %d\n",
+          YEAR_0, YEAR_T, POP_0_YEAR, POP_T_YEAR),
+  sprintf("(the %d office count is measured against a %d population, the latest county vintage published).\n",
+          YEAR_T, POP_T_YEAR),
+  "Connecticut excluded (counties replaced by planning regions in 2022); Puerto Rico and the outlying territories excluded.\n",
+  "Alaska and Hawaii rescaled and inset. NCUA Office of the Chief Economist.")
 
-map_one <- function(bincol, yr, sub) {
+map_one <- function(bincol, yr, popyr, sub) {
   ggplot() +
     geom_sf(data = MG, aes(fill = .data[[bincol]]), colour = "white", linewidth = 0.05) +
     geom_sf(data = states_g, fill = NA, colour = alpha(PAL$ink, 0.4), linewidth = 0.25) +
@@ -545,12 +581,13 @@ map_one <- function(bincol, yr, sub) {
                       guide = guide_legend(nrow = 1, label.position = "bottom",
                                            keywidth = unit(2.2, "lines"),
                                            keyheight = unit(0.5, "lines"))) +
-    labs(title = sprintf("Credit union offices per 10,000 residents, %d", yr),
-         subtitle = sub, caption = CAP_BASE) +
+    labs(title = sprintf("Credit union offices per 10,000 residents, %dQ1", yr),
+         subtitle = sprintf("%s  Population denominator: %d.", sub, popyr),
+         caption = CAP_BASE) +
     theme_map()
 }
-m2016 <- map_one("b0", YEAR_0, "Physical access to a credit union office, at the start of the period.")
-m2026 <- map_one("bT", YEAR_T, "The same measure ten years later.")
+m2016 <- map_one("b0", YEAR_0, POP_0_YEAR, "Physical access to a credit union office, at the start of the period.")
+m2026 <- map_one("bT", YEAR_T, POP_T_YEAR, "The same measure ten years later.")
 
 MG$dchg <- cut(MG$pc_den, breaks = c(-Inf, -50, -20, -5, 5, 20, 50, Inf),
                labels = c("< -50%", "-50 to -20", "-20 to -5", "about flat",
@@ -597,6 +634,10 @@ label_fips <- ann[order(-(off_T - off_0))][1:4, fips]
 lab_sf <- suppressWarnings(st_centroid(MG[MG$fips %in% label_fips, ],
                                        of_largest_polygon = TRUE))
 
+n_up_down   <- D[rural == 1 & regime6 == "Offices up, population down", .N]
+n_down_up   <- D[rural == 1 & regime6 == "Offices down, population up", .N]
+n_unchanged <- D[rural == 1 & regime6 == "Offices unchanged", .N]
+
 m_regime <- ggplot() +
   geom_sf(data = MG, aes(fill = regime6), colour = "white", linewidth = 0.05) +
   geom_sf(data = states_g, fill = NA, colour = alpha(PAL$ink, 0.45), linewidth = 0.26) +
@@ -607,7 +648,11 @@ m_regime <- ggplot() +
                                          keywidth = unit(1.4, "lines"),
                                          keyheight = unit(0.7, "lines"))) +
   labs(title = sprintf("Offices and people did not move together, %d to %d", YEAR_0, YEAR_T),
-       subtitle = "Dark teal is the case that should not happen in a commercially optimised branch network:\ncredit unions added offices in counties that were losing residents.",
+       subtitle = sprintf(paste0(
+         "Dark teal is the case a commercially optimised branch network does not produce: %d rural counties added\n",
+         "offices while losing residents. But %d rural counties lost offices while GAINING residents, and %d saw no\n",
+         "change at all - stasis, not decline, is the modal rural experience."),
+         n_up_down, n_down_up, n_unchanged),
        caption = CAP_BASE) +
   theme_map()
 ggsave(file.path(OUT_DIR, "regime_map.png"), m_regime, width = 13, height = 8.8, dpi = 300, bg = "white")
@@ -676,8 +721,13 @@ decomp_bar <- ggplot(dec, aes(part, val, fill = grp)) +
             vjust = ifelse(dec$val >= 0, -0.5, 1.3), size = 3.6, colour = PAL$ink) +
   scale_fill_manual(values = c("Rural" = PAL$deep, "Non-rural" = PAL$soft), name = NULL) +
   labs(title = sprintf("Where the density change came from, %d to %d", YEAR_0, YEAR_T),
-       subtitle = "Density change is offices minus population. Showing all three components stops the reader\nfrom crediting policy for what demography did.",
-       x = NULL, y = "Percent change") +
+       subtitle = sprintf(paste0(
+         "Density change is offices minus population. Of the %+.1f point rural gain, %+.1f points came from offices\n",
+         "and %+.1f from population loss - so the gain is not an artefact of depopulation. Non-rural offices grew too,\n",
+         "just slower than the %+.1f%% population increase."),
+         agg[rural == 1, pct_dens], agg[rural == 1, pct_off], -agg[rural == 1, pct_pop],
+         agg[rural == 0, pct_pop]),
+       x = NULL, y = "Percent change", caption = CAP_BASE) +
   theme_chart() +
   theme(panel.grid.major.x = element_blank())
 ggsave(file.path(OUT_DIR, "density_decomposition.png"), decomp_bar,
@@ -692,9 +742,14 @@ cov <- D[!is.na(rural), list(
   no_office_T         = sum(off_T == 0),
   lost_last_office    = sum(off_0 > 0 & off_T == 0),
   gained_first_office = sum(off_0 == 0 & off_T > 0),
-  pop_share_covered_T = 100 * sum(pop_T[off_T > 0]) / sum(pop_T)
+  pop_share_covered_T = 100 * sum(pop_T[off_T > 0]) / sum(pop_T),
+  residents_uncovered = sum(pop_T[off_T == 0])
 ), by = rural][order(-rural)]
+cov[, net_counties_covered := with_office_T - with_office_0]
 cat("\n--- 14.10  Coverage ---\n"); print(cov)
+cat(sprintf("\nRural residents living in a county with NO credit union office: %s (%.1f%%)\n",
+            comma(cov[rural == 1, residents_uncovered]),
+            100 - cov[rural == 1, pop_share_covered_T]))
 
 ## Single-provider counties: one credit union. If it merges away, the county
 ## has none.
@@ -714,9 +769,12 @@ cat("\n--- Ten rural counties with the largest density increase ---\n")
 print(head(movers[order(-pc_den), list(fips, off_0, off_T, pop_0, pop_T, pc_off, pc_pop, pc_den)], 10))
 
 ## ---- 14.11  charter age ----------------------------------------------------
-## Nearly free, and the strongest formation exhibit available without new data.
-## FOICU carries YEAR_OPENED. If the rural charter stock is old and nothing has
-## been added, the sector is a mid-century artifact being slowly amortised.
+## FIRST RUN RESULT: rural and non-rural charter stock are the same age (median
+## 1956 vs 1954, pre-1970 share 85.6% vs 86.0%, post-2010 share 0.65% vs 0.71%).
+## So this is NOT a rural exhibit - the formation freeze is system-wide, with
+## rural as the acute case because the rural stock is not being replaced at all.
+## Framed that way it still earns a slide; framed as a rural finding it would be
+## wrong, and a reviewer with the same file would catch it.
 
 fT <- fread(FOICU_T, colClasses = "character", encoding = "Latin-1", fill = TRUE)
 fT[, `:=`(cu_type = as.integer(get(pick_col(fT, c("^CU_TYPE$", "^CUTYPE$"), "cu type"))),
@@ -725,14 +783,23 @@ fT[, `:=`(cu_type = as.integer(get(pick_col(fT, c("^CU_TYPE$", "^CUTYPE$"), "cu 
 hq_map <- unique(off_T[is_hq == 1, list(CU_NUMBER, fips)])
 fT <- merge(fT, hq_map, by = "CU_NUMBER", all.x = TRUE)
 fT <- merge(fT, D[, list(fips, rural)], by = "fips", all.x = TRUE)
-age <- fT[cu_type %in% CU_TYPES_KEEP & yr > 1900 & !is.na(rural), list(
+
+age_stats <- function(d, lab) d[, list(
+  group         = lab,
   n             = .N,
   median_year   = as.numeric(median(yr)),
   pct_pre_1970  = 100 * mean(yr < 1970),
   pct_post_2000 = 100 * mean(yr >= 2000),
-  pct_post_2010 = 100 * mean(yr >= 2010)
-), by = rural][order(-rural)]
+  pct_post_2010 = 100 * mean(yr >= 2010),
+  n_post_2010   = sum(yr >= 2010))]
+
+base <- fT[cu_type %in% CU_TYPES_KEEP & yr > 1900]
+age <- rbindlist(list(
+  age_stats(base,                       "All charters"),
+  age_stats(base[rural == 1],           "Rural HQ"),
+  age_stats(base[rural == 0],           "Non-rural HQ")))
 cat("\n--- 14.11  Charter age of the surviving stock ---\n"); print(age)
+cat("\nRead this as a SYSTEM fact, not a rural one: the two groups are the same age.\n")
 fwrite(age, file.path(OUT_DIR, "charter_age.csv"))
 
 cat("\nAll exhibits written to ", OUT_DIR, "\n", sep = "")
