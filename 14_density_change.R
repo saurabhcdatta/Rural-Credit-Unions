@@ -329,18 +329,88 @@ pT <- pT[, list(pop_T = sum(pop)), by = fips]
 
 RURAL_UIC_2024 <- c(3, 6, 7, 8, 9)
 
+## The UIC table is loaded here rather than inherited from 2_rural_counties.R,
+## so this script runs standalone. Order of preference:
+##   1. uic24 already in the environment (2_rural_counties.R was run)
+##   2. a local copy at UIC_FILE
+##   3. download from ERS
+## The ?v= query strings on the ERS links are cache-busters and change without
+## notice, so a failed download is expected occasionally - grab the XLSX or CSV
+## by hand from https://www.ers.usda.gov/data-products/urban-influence-codes
+## and drop it at UIC_FILE.
+
+UIC_FILE <- file.path(GEO_DIR, "UrbanInfluenceCodes2024.xlsx")
+UIC_URLS <- c(
+  "https://www.ers.usda.gov/media/6181/2024-urban-influence-codes.xlsx?v=81925",
+  "https://www.ers.usda.gov/media/6181/2024-urban-influence-codes.xlsx?v=51332",
+  "https://ers.usda.gov/sites/default/files/_laserfiche/DataFiles/53797/UrbanInfluenceCodes2024.xlsx?v=96367")
+
+read_uic <- function(path) {
+  if (grepl("\\.csv$", path, ignore.case = TRUE)) {
+    as.data.table(fread(path, encoding = "Latin-1"))
+  } else {
+    if (!requireNamespace("readxl", quietly = TRUE))
+      stop("readxl is needed to read the ERS workbook, or save it as CSV and point UIC_FILE at that.")
+    sh <- readxl::excel_sheets(path)
+    ## The data sheet is the one with a FIPS column; the first sheet is often notes.
+    for (s in sh) {
+      d <- as.data.table(readxl::read_excel(path, sheet = s, guess_max = 5000))
+      if (any(grepl("fips", names(d), ignore.case = TRUE)) && nrow(d) > 1000) {
+        cat("  UIC sheet:", s, "|", nrow(d), "rows\n"); return(d)
+      }
+    }
+    stop("No sheet in ", path, " has a FIPS column and >1000 rows. Sheets: ",
+         paste(sh, collapse = ", "))
+  }
+}
+
 if (exists("uic24")) {
+  cat("Using uic24 already in the environment.\n")
   u <- as.data.table(uic24)
 } else {
-  stop("uic24 not found. Run 2_rural_counties.R first, or load the ERS Urban\n",
-       "Influence Codes 2024 table into a data.table with fips and uic columns.")
+  if (!file.exists(UIC_FILE)) {
+    cat("Fetching the 2024 Urban Influence Codes from ERS...\n")
+    got <- FALSE
+    for (uu in UIC_URLS) {
+      got <- tryCatch({ dl(uu, UIC_FILE, "zip"); TRUE },   # xlsx is a zip container
+                      error = function(e) { message("  ", conditionMessage(e)); FALSE })
+      if (isTRUE(got)) break
+    }
+    if (!isTRUE(got))
+      stop("Could not fetch the UIC file. Download the XLSX or CSV from\n",
+           "  https://www.ers.usda.gov/data-products/urban-influence-codes\n",
+           "and save it as: ", UIC_FILE)
+  }
+  u <- read_uic(UIC_FILE)
+  uic24 <- copy(u)          # leave it in the environment for later blocks
 }
-ucol_f <- grep("^fips|^FIPS|statecty", names(u), value = TRUE)[1]
-ucol_u <- grep("^uic|^UIC", names(u), value = TRUE)[1]
-stopifnot(!is.na(ucol_f), !is.na(ucol_u))
-rural_map <- u[, list(fips  = harmonise(formatC(get(ucol_f), width = 5, flag = "0")),
-                      rural = as.integer(as.integer(get(ucol_u)) %in% RURAL_UIC_2024))]
+
+## Resolve the two columns we need. ERS has renamed these across vintages, so
+## match by pattern and print what was taken.
+ucol_f <- pick_col(u, c("^FIPS$", "^fips", "FIPS", "statecty"), "UIC county fips")
+ucol_u <- pick_col(u, c("^UIC_2024$", "^UIC$", "^uic", "URBAN.?INFLUENCE"), "UIC code")
+cat(sprintf("  UIC columns: fips = %s | code = %s\n", ucol_f, ucol_u))
+
+rural_map <- u[, list(fips = harmonise(formatC(as.integer(get(ucol_f)), width = 5, flag = "0")),
+                      uic  = as.integer(get(ucol_u)))]
+rural_map <- rural_map[!is.na(uic) & !is.na(fips)]
+rural_map[, rural := as.integer(uic %in% RURAL_UIC_2024)]
 rural_map <- unique(rural_map, by = "fips")
+
+## VALIDATE before using it. The 2024 vintage has nine codes and classifies
+## roughly 3,235 counties and county-equivalents including Puerto Rico and the
+## outlying territories. The project's validated figure is 1,556 rural counties
+## across the 50 states and DC - if the line below does not print 1,556,
+## something is wrong with the file or the column resolution, and nothing
+## downstream should be trusted.
+cat("\n--- UIC 2024 code distribution ---\n")
+print(rural_map[, list(counties = .N), by = uic][order(uic)])
+n_rural_50 <- rural_map[!substr(fips, 1, 2) %in% c("60", "66", "69", "72", "78") &
+                          rural == 1, .N]
+cat(sprintf("Rural counties, 50 states + DC: %d   (expected 1,556)\n", n_rural_50))
+if (n_rural_50 != 1556L)
+  warning("Rural county count does not match the validated 1,556 - check the UIC file before proceeding.")
+rural_map <- rural_map[, list(fips, rural)]
 
 D <- Reduce(function(a, b) merge(a, b, by = "fips", all = TRUE),
             list(p0, pT, cnt_0, cnt_T))
