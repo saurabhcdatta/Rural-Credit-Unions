@@ -716,18 +716,25 @@ S[, y_plot := pmin(pc_den, Y_CAP)]
 ## because the denominator shrank - the exact artifact this exhibit exists to
 ## disown. So the annotation splits the quadrant rather than reporting one
 ## number that quietly conflates the two.
+##
+## AND NOTE THE DENOMINATOR MISMATCH. This exhibit drops counties under 5,000
+## residents and counties with no offices in the base year, so its office-driven
+## count is a SUBSET of the regime map's "offices up, population down" total.
+## Both numbers are printed below; if they appear on adjacent slides without the
+## filter stated, someone will ask why they differ.
 q_total  <- S[rural == 1 & pc_pop < 0 & pc_den > 0, .N]
 q_office <- S[rural == 1 & pc_pop < 0 & pc_den > 0 & off_T > off_0, .N]
 q_denom  <- q_total - q_office
+q_net    <- S[rural == 1 & pc_pop < 0 & pc_den > 0 & off_T > off_0, sum(off_T - off_0)]
 
 quad <- ggplot(S, aes(pc_pop, y_plot)) +
   annotate("rect", xmin = -Inf, xmax = 0, ymin = 0, ymax = Inf,
            fill = PAL$pale, alpha = 0.5) +
   annotate("text", x = -38, y = Y_CAP * 0.95, hjust = 0, vjust = 1,
            label = sprintf(paste0("Fewer people, better access: %d rural counties\n",
-                                  "%d because offices were added\n",
-                                  "%d only because the population shrank"),
-                           q_total, q_office, q_denom),
+                                  "%d added offices (%d net), the rest held steady\n",
+                                  "%d improved only because the population shrank"),
+                           q_total, q_office, q_net, q_denom),
            size = 3.5, colour = PAL$deep, fontface = "bold", lineheight = 1.15) +
   geom_hline(yintercept = 0, colour = PAL$ink, linewidth = 0.35) +
   geom_vline(xintercept = 0, colour = PAL$ink, linewidth = 0.35) +
@@ -756,8 +763,12 @@ quad <- ggplot(S, aes(pc_pop, y_plot)) +
   theme(legend.position = "top")
 ggsave(file.path(OUT_DIR, "offices_vs_population_scatter.png"), quad,
        width = 11, height = 8, dpi = 300, bg = "white")
-cat(sprintf("\nScatter: %s counties plotted; %d rural in the shaded quadrant (%d office-driven, %d denominator-driven); %d above the +%d%% cap\n",
-            comma(nrow(S)), q_total, q_office, q_denom, n_off_scale, Y_CAP))
+cat(sprintf("\nScatter: %s counties plotted; %d rural in the shaded quadrant (%d office-driven adding %d net offices, %d denominator-driven); %d above the +%d%% cap\n",
+            comma(nrow(S)), q_total, q_office, q_net, q_denom, n_off_scale, Y_CAP))
+cat(sprintf("  Reconciliation: the regime map counts %d rural 'offices up, population down' counties.\n",
+            n_up_down))
+cat(sprintf("  The scatter shows %d because it drops counties under 5,000 residents and\n", q_office))
+cat(sprintf("  counties with no offices in %dQ1. State the filter if both appear in one deck.\n", YEAR_0))
 
 dec <- rbindlist(lapply(c(1, 0), function(r) rbindlist(list(
   data.table(grp = ifelse(r == 1, "Rural", "Non-rural"), part = "Offices",    val = agg[rural == r, pct_off]),
