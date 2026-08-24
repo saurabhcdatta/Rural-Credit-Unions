@@ -629,14 +629,11 @@ REGIME_COLS <- c(
   "Offices down, population up"   = "#A8341F",   # offices lost in a growing county
   "No offices in either year"     = "#FBFBFA")   # near-white - clearly absence
 
-## A few named annotations. CHECK THESE BEFORE PRESENTING - a county that gained
-## three offices because one merger reclassified a headquarters as a branch is
-## not a story you want repeated in a hearing.
-ann <- as.data.table(st_drop_geometry(MG))[!is.na(regime6) & rural == 1 &
-                                             regime6 == "Offices up, population down"]
-label_fips <- ann[order(-(off_T - off_0))][1:4, fips]
-lab_sf <- suppressWarnings(st_centroid(MG[MG$fips %in% label_fips, ],
-                                       of_largest_polygon = TRUE))
+## NO COUNTY LABELS. Four names on a 3,100-county choropleth do not help: they
+## collide with state boundaries, they are unreadable at slide size, and they
+## invite the question "why those four?" which has no good answer. The counts in
+## the subtitle carry the argument; a named-county list belongs in the backing
+## CSV, where anyone who asks can be handed it.
 
 n_up_down   <- D[rural == 1 & regime6 == "Offices up, population down", .N]
 n_down_up   <- D[rural == 1 & regime6 == "Offices down, population up", .N]
@@ -645,8 +642,6 @@ n_unchanged <- D[rural == 1 & regime6 == "Offices unchanged", .N]
 m_regime <- ggplot() +
   geom_sf(data = MG, aes(fill = regime6), colour = "white", linewidth = 0.05) +
   geom_sf(data = states_g, fill = NA, colour = alpha(PAL$ink, 0.45), linewidth = 0.26) +
-  geom_sf_text(data = lab_sf, aes(label = NAME), size = 2.9, fontface = "bold",
-               colour = PAL$ink, check_overlap = TRUE) +
   scale_fill_manual(values = REGIME_COLS, name = NULL, na.value = "grey92", drop = FALSE,
                     guide = guide_legend(nrow = 2, byrow = TRUE,
                                          keywidth = unit(1.4, "lines"),
@@ -661,12 +656,16 @@ m_regime <- ggplot() +
   theme_map()
 ggsave(file.path(OUT_DIR, "regime_map.png"), m_regime, width = 13, height = 8.8, dpi = 300, bg = "white")
 
-## CHECK THE ANNOTATIONS. A county that gained three offices because one merger
-## reclassified a headquarters as a branch is not a story to put in front of a
-## senior executive. Inspect these before the map leaves the building.
-ann_chk <- merge(as.data.table(st_drop_geometry(MG))[fips %in% label_fips, list(fips, NAME)],
-                 D[, list(fips, off_0, off_T, pop_0, pop_T, pc_pop)], by = "fips")
-cat("\n--- Counties labelled on the regime map ---\n"); print(ann_chk)
+## The named list, for the backing pack rather than the map face. Sorted by net
+## offices added; check these before quoting any of them, since a county can
+## gain offices purely because a merger reclassified a headquarters as a branch.
+named <- merge(as.data.table(st_drop_geometry(MG))[!is.na(regime6) & rural == 1 &
+                 regime6 == "Offices up, population down", list(fips, NAME)],
+               D[, list(fips, off_0, off_T, pop_0, pop_T, pc_pop)], by = "fips")
+named <- named[order(-(off_T - off_0))]
+cat("\n--- Rural counties that added offices while losing population (top 15) ---\n")
+print(head(named, 15))
+fwrite(named, file.path(OUT_DIR, "rural_offices_up_population_down.csv"))
 
 ## Companion: a stacked bar, not a second map. Same information, less to read.
 comp <- D[!is.na(rural) & !is.na(regime6), list(n = .N), by = list(regime6, rural)]
@@ -710,22 +709,36 @@ setorder(S, grp)          # rural drawn last, not buried under 1,500 grey points
 Y_CAP <- 200
 n_off_scale <- S[pc_den > Y_CAP, .N]
 S[, y_plot := pmin(pc_den, Y_CAP)]
-q_up_down <- S[rural == 1 & pc_pop < 0 & pc_den > 0, .N]
+
+## IMPORTANT. The shaded quadrant is "population fell and density rose", which
+## is NOT the same as "offices were added". A county whose office count did not
+## change but which lost residents also lands there, and its density rose purely
+## because the denominator shrank - the exact artifact this exhibit exists to
+## disown. So the annotation splits the quadrant rather than reporting one
+## number that quietly conflates the two.
+q_total  <- S[rural == 1 & pc_pop < 0 & pc_den > 0, .N]
+q_office <- S[rural == 1 & pc_pop < 0 & pc_den > 0 & off_T > off_0, .N]
+q_denom  <- q_total - q_office
 
 quad <- ggplot(S, aes(pc_pop, y_plot)) +
   annotate("rect", xmin = -Inf, xmax = 0, ymin = 0, ymax = Inf,
            fill = PAL$pale, alpha = 0.5) +
-  annotate("text", x = -38, y = Y_CAP * 0.93, hjust = 0, vjust = 1,
-           label = sprintf("Fewer people, better access\n%d rural counties", q_up_down),
-           size = 3.6, colour = PAL$deep, fontface = "bold", lineheight = 1.1) +
+  annotate("text", x = -38, y = Y_CAP * 0.95, hjust = 0, vjust = 1,
+           label = sprintf(paste0("Fewer people, better access: %d rural counties\n",
+                                  "%d because offices were added\n",
+                                  "%d only because the population shrank"),
+                           q_total, q_office, q_denom),
+           size = 3.5, colour = PAL$deep, fontface = "bold", lineheight = 1.15) +
   geom_hline(yintercept = 0, colour = PAL$ink, linewidth = 0.35) +
   geom_vline(xintercept = 0, colour = PAL$ink, linewidth = 0.35) +
-  geom_point(aes(size = pop_T, colour = grp), alpha = 0.55, stroke = 0) +
+  geom_point(aes(size = pop_T, colour = grp), alpha = 0.6, stroke = 0) +
   scale_colour_manual(values = c("Non-rural county" = "#AEBDC0",
                                  "Rural county"     = PAL$accent),
                       name = NULL,
                       guide = guide_legend(override.aes = list(size = 4, alpha = 1))) +
-  scale_size_area(max_size = 6, guide = "none") +
+  ## range(), not scale_size_area: area scaling makes every small rural county
+  ## a sub-pixel dot, which is most of the population of interest.
+  scale_size_continuous(range = c(0.9, 6), guide = "none") +
   scale_x_continuous(labels = label_percent(scale = 1), limits = c(-40, 60)) +
   scale_y_continuous(labels = label_percent(scale = 1), limits = c(-100, Y_CAP)) +
   labs(title = "Where offices moved against where people moved",
@@ -743,8 +756,8 @@ quad <- ggplot(S, aes(pc_pop, y_plot)) +
   theme(legend.position = "top")
 ggsave(file.path(OUT_DIR, "offices_vs_population_scatter.png"), quad,
        width = 11, height = 8, dpi = 300, bg = "white")
-cat(sprintf("\nScatter: %s counties plotted, %d rural in the shaded quadrant, %d above the +%d%% cap\n",
-            comma(nrow(S)), q_up_down, n_off_scale, Y_CAP))
+cat(sprintf("\nScatter: %s counties plotted; %d rural in the shaded quadrant (%d office-driven, %d denominator-driven); %d above the +%d%% cap\n",
+            comma(nrow(S)), q_total, q_office, q_denom, n_off_scale, Y_CAP))
 
 dec <- rbindlist(lapply(c(1, 0), function(r) rbindlist(list(
   data.table(grp = ifelse(r == 1, "Rural", "Non-rural"), part = "Offices",    val = agg[rural == r, pct_off]),
