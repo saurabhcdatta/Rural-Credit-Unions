@@ -193,8 +193,8 @@ if (any(rec$residual != 0L)) {
 
 ## Event counts (everything that happened, including come-and-go charters) and
 ## rates per 100 at risk, so the two segments are comparable.
-evt <- merge(life[entered, .(entries_all = .N), by = .(seg = seg(r_first))],
-             life[exited,  .(exits_all   = .N), by = .(seg = seg(r_last))], by = "seg")
+evt <- merge(life[entered == TRUE, .(entries_all = .N), by = .(seg = seg(r_first))],
+             life[exited == TRUE,  .(exits_all   = .N), by = .(seg = seg(r_last))], by = "seg")
 evt <- merge(evt, lvl, by = "seg")
 evt[, `:=`(entries_per_100 = round(100 * entries_all / start, 1),
            exits_per_100   = round(100 * exits_all / start, 1),
@@ -203,14 +203,14 @@ cat("\n=== rq2.4  Event counts and rates ===\n"); print(evt)               ## LO
 fwrite(evt, file.path(OUT, "rq2_4_flows.csv"))
 
 ## Entries by year, both segments
-eby <- life[entered, .N, by = .(yr = (first_q - 1L) %/% 4L, seg = seg(r_first))]
+eby <- life[entered == TRUE, .N, by = .(yr = (first_q - 1L) %/% 4L, seg = seg(r_first))]
 cat("\n=== rq2.4  Entries by year ===\n"); print(dcast(eby, yr ~ seg, value.var = "N", fill = 0L))   ## LOOK
 
 ## ---- rq2.5  size at first appearance -- the de novo denominator -------------
 ## A genuine de novo arrives tiny. An "entry" that arrives with $80m is a
 ## conversion or a re-registration. This is what "47 entries" is actually made of.
 
-fa <- cr[!is.na(rural_fix)][life[entered], on = .(cu_number, qidx = first_q),
+fa <- cr[!is.na(rural_fix)][life[entered == TRUE], on = .(cu_number, qidx = first_q),
                              .(cu_number, first_q, rural = rural_fix, assets_first = assets_tot, members_first = members)]
 cat("\n=== rq2.5  Entrants by assets at first appearance ===\n")
 print(fa[, .(entrants = .N,
@@ -228,7 +228,7 @@ fwrite(fa, file.path(OUT, "rq2_5_entrant_size.csv"))
 ## a different sentence from "the credit union closed".
 
 if (!is.na(C$succ)) {
-  last_row <- cr[!is.na(rural_fix)][life[exited], on = .(cu_number, qidx = last_q),
+  last_row <- cr[!is.na(rural_fix)][life[exited == TRUE], on = .(cu_number, qidx = last_q),
                                      .(cu_number, last_q, rural_exit = rural_fix, succ = get(C$succ))]
   last_row[, succ := as.character(succ)]
   succ_r <- cr[!is.na(rural_fix), .(rural_succ = rural_fix[which.max(qidx)]), by = .(succ = as.character(cu_number))]
@@ -250,7 +250,7 @@ OUTCOME_LOOKUP <- c()   # fill from the NCUA data dictionary, e.g. c(MC = "Merge
 lab <- function(x) { v <- OUTCOME_LOOKUP[as.character(x)]; fifelse(is.na(v), paste0(x, " [UNVERIFIED]"), v) }
 
 if (!is.na(C$outcome)) {
-  ex_row <- cr[!is.na(rural_fix)][life[exited], on = .(cu_number, qidx = last_q),
+  ex_row <- cr[!is.na(rural_fix)][life[exited == TRUE], on = .(cu_number, qidx = last_q),
                                    .(cu_number, rural = rural_fix, outcome = get(C$outcome),
                                      reason = if (!is.na(C$reason)) get(C$reason) else NA)]
   comp <- ex_row[, .N, by = .(seg = seg(rural), outcome = lab(outcome))][order(seg, -N)]
