@@ -228,26 +228,49 @@ fwrite(fa, file.path(OUT, "rq2_5_entrant_size.csv"))
 ## a different sentence from "the credit union closed".
 
 if (!is.na(C$succ)) {
+  ## The pointer (join_number_pointer / acquiredcu) refers to the ACQUIRER's
+  ## join_number, not its cu_number. Build the successor lookup on join_number.
+  ## If the panel has no join_number the fallback tries cu_number and reports
+  ## how many it identified, so a near-zero match is visible rather than silent.
+  key_col <- if ("join_number" %in% names(cr)) "join_number" else "cu_number"
+  cat("Successor lookup keyed on:", key_col, "\n")
+
   last_row <- cr[!is.na(rural_fix)][life[exited == TRUE], on = .(cu_number, qidx = last_q),
                                      .(cu_number, last_q, rural_exit = rural_fix, succ = get(C$succ))]
-  last_row[, succ := as.character(succ)]
-  succ_r <- cr[!is.na(rural_fix), .(rural_succ = rural_fix[which.max(qidx)]), by = .(succ = as.character(cu_number))]
-  last_row[succ_r, on = "succ", rural_succ := i.rural_succ]
+  last_row[, succ := as.character(as.integer(as.numeric(succ)))]     # normalise "12345.0" / " 12345"
+  last_row[succ %in% c("0", "NA", ""), succ := NA_character_]
+
+  ## Rural status of the acquirer at the quarter the exiting CU last appeared,
+  ## falling back to the acquirer's latest status if it was not observed then.
+  succ_q <- cr[!is.na(rural_fix), .(key = as.character(as.integer(get(key_col))), qidx, rural_succ = rural_fix)]
+  last_row[succ_q, on = .(succ = key, last_q = qidx), rural_succ := i.rural_succ]
+  succ_last <- succ_q[, .(rural_latest = rural_succ[which.max(qidx)]), by = key]
+  last_row[succ_last, on = .(succ = key), rural_succ := fifelse(is.na(rural_succ), i.rural_latest, rural_succ)]
+
   cat("\n=== rq2.6  Successor rurality for exiting charters ===\n")
   print(last_row[, .(exits = .N,
+                     pointer_present = sum(!is.na(succ)),
                      successor_identified = sum(!is.na(rural_succ)),
                      successor_rural = sum(rural_succ == 1L, na.rm = TRUE),
                      successor_nonrural = sum(rural_succ == 0L, na.rm = TRUE)),
                  by = .(exiting = seg(rural_exit))])                       ## LOOK
-  cat("If the pointer column is keyed on join_number rather than cu_number the\n")
-  cat("identified count will be near zero -- swap the join key in succ_r.\n")
+  cat("pointer_present < exits means those exits carry no successor -- liquidations,\n")
+  cat("or a pointer recorded in a different field. successor_identified < pointer_present\n")
+  cat("means the pointer value did not match any ", key_col, " in the panel.\n", sep = "")
+  rr <- last_row[rural_exit == 1L & !is.na(rural_succ)]
+  cat(sprintf("\nOf rural exits with an identified successor, %.0f%% went to a NON-rural acquirer.\n",
+              100 * mean(rr$rural_succ == 0L)))
   fwrite(last_row, file.path(OUT, "rq2_6_successors.csv"))
 } else cat("\nrq2.6 skipped: no successor pointer column found.\n")
 
 ## ---- rq2.7  exit composition -- UNVERIFIED until the dictionary is checked --
 
 OUTCOME_LOOKUP <- c()   # fill from the NCUA data dictionary, e.g. c(MC = "Merged", LQ = "Liquidated")
-lab <- function(x) { v <- OUTCOME_LOOKUP[as.character(x)]; fifelse(is.na(v), paste0(x, " [UNVERIFIED]"), v) }
+lab <- function(x) {
+  x <- as.character(x)
+  v <- if (length(OUTCOME_LOOKUP)) unname(OUTCOME_LOOKUP[x]) else rep(NA_character_, length(x))
+  fifelse(is.na(v), paste0(x, " [UNVERIFIED]"), v)
+}
 
 if (!is.na(C$outcome)) {
   ex_row <- cr[!is.na(rural_fix)][life[exited == TRUE], on = .(cu_number, qidx = last_q),
