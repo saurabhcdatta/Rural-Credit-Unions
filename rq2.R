@@ -1,3 +1,4 @@
+## rq2.R -- revision 2026-09-22b (bare-i fix, join_number successor key, empty-lookup guard)
 ###############################################################################
 # rq2.R  --  RESEARCH QUESTION 2
 # "Are rural credit unions disappearing faster than credit unions everywhere
