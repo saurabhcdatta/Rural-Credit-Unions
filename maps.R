@@ -22,8 +22,18 @@
 
 suppressPackageStartupMessages({ library(data.table); library(sf); library(ggplot2); library(tigris) })
 options(tigris_use_cache = TRUE)
+## Binary-safe check for a proxy block page masquerading as a download.
+## Defined here too, so this script works whichever copy of dl() is loaded.
+looks_like_html <- function(f) {
+  b <- readBin(f, "raw", 400L)
+  if (length(b) >= 2L && b[1] == as.raw(0x50) && b[2] == as.raw(0x4b)) return(FALSE)   # ZIP
+  b[b == as.raw(0)] <- as.raw(32)
+  txt <- tolower(iconv(rawToChar(b), from = "", to = "ASCII", sub = ""))
+  grepl("<html|<!doctype", txt)
+}
 MAP_DIR <- file.path(OUT_DIR, "maps"); dir.create(MAP_DIR, recursive = TRUE, showWarnings = FALSE)
 stopifnot(exists("county"), exists("offices_q"), exists("cr"), exists("cu"))
+FROM_MASTER <- exists("ANCHORS")     # TRUE after rq_load.R; FALSE under the legacy shim
 
 ## ---- palette and helpers ----------------------------------------------------
 C_NONRURAL <- "#F4F4F1"; C_RURAL_BASE <- "#E3D9BF"; C_UNRATED <- "#CFCFCA"; C_STATE <- "#4A5A62"; C_CTY <- "#FFFFFF"
@@ -60,6 +70,16 @@ K[is.na(offices), `:=`(offices = 0L, hqs = 0L, branches = 0L, cus = 0L)]
 K[, has_office := offices > 0L]
 K[, pop := fifelse(!is.na(pop2024), pop2024, pop2020)]
 M <- merge(cty_sf, K, by = "fips", all.x = TRUE)   # sf with facts
+
+## CONSISTENCY GATE: the numbers in the map titles must equal the anchors the
+## deck quotes. If they do not, stop -- do not draw maps that disagree with slides.
+if (FROM_MASTER) {
+  a <- function(k) ANCHORS[key == k, value]
+  stopifnot(cr[qidx == QZ & rural == 1L, uniqueN(cu_number)] == a("rural_cus_latest"))
+  stopifnot(K[rural24 == 1L & !ct & offices == 0L, .N] == a("rural_counties_no_office"))
+  stopifnot(K[rural24 == 1L & !ct & cus == 1L, .N] == a("rural_single_provider_counties"))
+  cat("Consistency gate passed: map counts equal the master anchors.\n")
+} else cat("NOTE: running from the legacy shim. Titles are NOT guaranteed to match the deck. Rebuild from the master before publishing.\n")
 
 ## rural HQ points (from cr, latest quarter), placed at county centroids
 hq <- cr[qidx == QZ & rural == 1L, .(cu_number, fips, assets_tot)]

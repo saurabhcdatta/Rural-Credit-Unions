@@ -27,6 +27,15 @@
 suppressPackageStartupMessages({ library(data.table); library(sf); library(ggplot2) })
 stopifnot(exists("sites"), exists("county"), exists("cty_sf"), exists("QZ"))
 sf_use_s2(TRUE)
+## Binary-safe check for a proxy block page masquerading as a download.
+## Defined here too, so this script works whichever copy of dl() is loaded.
+looks_like_html <- function(f) {
+  b <- readBin(f, "raw", 400L)
+  if (length(b) >= 2L && b[1] == as.raw(0x50) && b[2] == as.raw(0x4b)) return(FALSE)   # ZIP
+  b[b == as.raw(0)] <- as.raw(32)
+  txt <- tolower(iconv(rawToChar(b), from = "", to = "ASCII", sub = ""))
+  grepl("<html|<!doctype", txt)
+}
 MI <- 1609.344   # metres per mile
 
 ## ---- D1  ZIP centroids (gazetteer) ------------------------------------------
