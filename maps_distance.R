@@ -106,7 +106,9 @@ if (exists("register_result")) for (i in seq_len(nrow(seg))) {
 }
 
 ## ---- MAP 11  average distance, rural counties -----------------------------------
-K2 <- merge(county[is_state_or_dc == TRUE, .(fips, rural24)], cd[, .(fips, miles_wmean, share_over_10, pop)], by = "fips", all.x = TRUE)
+cd_map <- rbind(cd[, .(fips, miles_wmean, share_over_10, pop)],
+                cd[fips == "02261", .(fips = c("02063", "02066"), miles_wmean, share_over_10, pop)])   # AK successors share the folded value
+K2 <- merge(county[is_state_or_dc == TRUE, .(fips, rural24)], cd_map, by = "fips", all.x = TRUE)
 K2[, m11 := fifelse(rural24 == 0L, "Non-rural",
            as.character(cut(miles_wmean, c(-Inf, 5, 10, 20, 40, Inf),
                             labels = c("Under 5 miles", "5-10 miles", "10-20 miles", "20-40 miles", "Over 40 miles"))))]
@@ -118,8 +120,8 @@ p11 <- ggplot() +
   geom_sf(data = st_sf, fill = NA, colour = C_STATE, linewidth = 0.3) +
   scale_fill_manual(values = c("Non-rural" = C_NONRURAL, "Under 5 miles" = "#DCE6E4", "5-10 miles" = "#9FC3C1",
                                "10-20 miles" = "#E8A24A", "20-40 miles" = "#C8553D", "Over 40 miles" = "#7A2A1A"),
-                    name = "Average distance from a resident to the nearest credit union office", drop = FALSE) +
-  labs(title = sprintf("In %d rural counties the average resident is more than 20 miles from a credit union office \u2014 %.1f million people", far_n, far_pop / 1e6),
+                    name = "Average distance from a resident to the nearest credit union office", drop = FALSE, na.value = "#FFFFFF", na.translate = FALSE) +
+  labs(title = sprintf("In %d rural counties the average resident is more than 20 miles from a credit union office\n\u2014 %.1f million people", far_n, far_pop / 1e6),
        subtitle = "Population-weighted average, from census-tract population centres to the nearest office, straight-line miles. Rural counties only.",
        caption = CAP("Office locations: ZIP-code centroids (Census gazetteer 2023). Population: Census 2020 tract centroids.")) + TH + leg(1)
 sv(p11, "map11_distance_to_nearest_office")
@@ -137,9 +139,9 @@ p12 <- ggplot() +
   geom_sf(data = st_sf, fill = NA, colour = C_STATE, linewidth = 0.3) +
   scale_fill_manual(values = c("Non-rural" = C_NONRURAL, "Under 10%" = "#DCE6E4", "10-25%" = "#9FC3C1",
                                "25-50%" = "#E8A24A", "50-75%" = "#C8553D", "Over 75%" = "#7A2A1A"),
-                    name = "Share of residents more than 10 miles from any credit union office", drop = FALSE) +
+                    name = "Share of residents more than 10 miles from a credit union office", drop = FALSE, na.value = "#FFFFFF", na.translate = FALSE) +
   labs(title = sprintf("%.1f million rural residents live more than 10 miles from a credit union office \u2014 the Federal Reserve's rural \u201Cdesert\u201D threshold", des_pop / 1e6),
-       subtitle = sprintf("In %d rural counties, more than half of residents are beyond 10 miles. Same 10-mile rural standard as the interagency banking-desert work, so comparable with the bank study.", des_n),
+       subtitle = sprintf("In %d rural counties, more than half of residents are beyond 10 miles. Same 10-mile rural standard as the interagency banking-desert work.\nCredit union offices only \u2014 bank branches are not counted here, so this is not a banking-desert map.", des_n),
        caption = CAP("Office locations: ZIP-code centroids (Census gazetteer 2023). Population: Census 2020 tract centroids. Threshold: 10 miles straight-line for rural tracts, per FedCommunities Banking Deserts methodology.")) + TH + leg(1)
 sv(p12, "map12_residents_beyond_10_miles")
 
