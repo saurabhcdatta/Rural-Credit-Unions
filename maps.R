@@ -26,7 +26,7 @@ MAP_DIR <- file.path(OUT_DIR, "maps"); dir.create(MAP_DIR, recursive = TRUE, sho
 stopifnot(exists("county"), exists("offices_q"), exists("cr"), exists("cu"))
 
 ## ---- palette and helpers ----------------------------------------------------
-C_NONRURAL <- "#E6E9E9"; C_STATE <- "#5B6B72"; C_CTY <- "#FFFFFF"
+C_NONRURAL <- "#F4F4F1"; C_RURAL_BASE <- "#E3D9BF"; C_UNRATED <- "#CFCFCA"; C_STATE <- "#4A5A62"; C_CTY <- "#FFFFFF"
 C_NOOFFICE <- "#C8553D"; C_TEAL <- c("#DCE6E4", "#7FB0AE", "#1F6F78", "#0E4C55")
 TH <- theme_void(base_size = 12) +
   theme(plot.title = element_text(face = "bold", size = 15, hjust = 0),
@@ -38,6 +38,7 @@ sv <- function(p, name) ggsave(file.path(MAP_DIR, paste0(name, ".png")), p, widt
 CAP <- function(extra = "") paste0("Rural = county neither in nor adjacent to a metro area (12 CFR 1026.35, via USDA-ERS 2024 Urban Influence Codes). ",
                                    "Offices = headquarters and branches, ", q_lab(QZ), ". ", extra, " Preliminary.")
 POP_FLOOR <- 2000
+fac <- function(x, lv) factor(x, levels = lv)   # explicit legend order; never alphabetical
 
 ## ---- base geometry ----------------------------------------------------------
 cty_sf <- counties(cb = TRUE, resolution = "20m", year = 2023) |> shift_geometry()
@@ -64,9 +65,9 @@ base_layers <- function(fill_col) list(
   geom_sf(data = st_sf, fill = NA, colour = C_STATE, linewidth = 0.3))
 
 ## ---- MAP 1  where the rural credit unions are -------------------------------
-M$m1 <- ifelse(M$rural24 == 1L, "Rural county", "Non-rural county")
+M$m1 <- fac(ifelse(M$rural24 == 1L, "Rural county", "Non-rural county"), c("Non-rural county", "Rural county"))
 p1 <- ggplot() + base_layers("m1") +
-  scale_fill_manual(values = c("Rural county" = C_TEAL[1], "Non-rural county" = C_NONRURAL), name = NULL) +
+  scale_fill_manual(values = c("Rural county" = C_RURAL_BASE, "Non-rural county" = C_NONRURAL), name = NULL) +
   geom_point(data = hq, aes(X, Y, size = assets_tot / 1e6), colour = C_TEAL[4], alpha = 0.75, shape = 16) +
   scale_size_area(max_size = 7, breaks = c(10, 100, 500, 1000), labels = c("$10m", "$100m", "$500m", "$1bn"), name = "Assets") +
   labs(title = sprintf("%d rural credit unions, headquartered in %d of %d rural counties",
@@ -82,9 +83,10 @@ K[, m2 := fifelse(rural24 == 0L, "Non-rural",
           fifelse(pop < POP_FLOOR, "Under 2,000 residents",
                   as.character(cut(res_per_office, c(0, 2500, 5000, 10000, Inf),
                                    labels = c("Under 2,500 per office", "2,500-5,000", "5,000-10,000", "Over 10,000 per office"))))))]
+K[, m2 := fac(m2, c("Non-rural", "No office", "Under 2,000 residents", "Under 2,500 per office", "2,500-5,000", "5,000-10,000", "Over 10,000 per office"))]
 M <- merge(cty_sf, K, by = "fips", all.x = TRUE)
 p2 <- ggplot() + base_layers("m2") +
-  scale_fill_manual(values = c("Non-rural" = C_NONRURAL, "No office" = C_NOOFFICE, "Under 2,000 residents" = "#F3F5F4",
+  scale_fill_manual(values = c("Non-rural" = C_NONRURAL, "No office" = C_NOOFFICE, "Under 2,000 residents" = C_UNRATED,
                                "Under 2,500 per office" = C_TEAL[4], "2,500-5,000" = C_TEAL[3], "5,000-10,000" = C_TEAL[2], "Over 10,000 per office" = C_TEAL[1]),
                     name = "Residents per\ncredit union office", drop = FALSE) +
   labs(title = "How many rural residents each credit union office serves",
@@ -95,10 +97,11 @@ sv(p2, "map02_residents_per_office")
 ## ---- MAP 3  the counties with no office, shaded by people -------------------
 K[, m3 := fifelse(rural24 == 0L, "Non-rural", fifelse(offices > 0L, "Has an office",
           as.character(cut(pop, c(0, 5000, 15000, 30000, Inf), labels = c("Under 5,000", "5,000-15,000", "15,000-30,000", "Over 30,000")))))]
+K[, m3 := fac(m3, c("Non-rural", "Has an office", "Under 5,000", "5,000-15,000", "15,000-30,000", "Over 30,000"))]
 M <- merge(cty_sf, K, by = "fips", all.x = TRUE)
 n_no <- K[rural24 == 1L & offices == 0L, .N]; pop_no <- K[rural24 == 1L & offices == 0L, sum(pop, na.rm = TRUE)]
 p3 <- ggplot() + base_layers("m3") +
-  scale_fill_manual(values = c("Non-rural" = C_NONRURAL, "Has an office" = "#F3F5F4",
+  scale_fill_manual(values = c("Non-rural" = C_NONRURAL, "Has an office" = "#DCE6E4",
                                "Under 5,000" = "#F2D3CB", "5,000-15,000" = "#E5A48F", "15,000-30,000" = "#D4785B", "Over 30,000" = "#A63E27"),
                     name = "Residents in counties\nwith NO office", drop = FALSE) +
   labs(title = sprintf("%d rural counties have no credit union office \u2014 %.1f million people", n_no, pop_no / 1e6),
@@ -108,6 +111,7 @@ sv(p3, "map03_no_office_by_population")
 
 ## ---- MAP 4  one merger away: single-provider counties -----------------------
 K[, m4 := fifelse(rural24 == 0L, "Non-rural", fifelse(offices == 0L, "No office", fifelse(cus == 1L, "Exactly one credit union", "Two or more")))]
+K[, m4 := fac(m4, c("Non-rural", "No office", "Exactly one credit union", "Two or more"))]
 M <- merge(cty_sf, K, by = "fips", all.x = TRUE)
 ## the single provider's HQ county: is it in the county it serves?
 single <- sites[qidx == QZ & !foreign & !terr & !is.na(fips)][K[rural24 == 1L & cus == 1L, .(fips)], on = "fips", nomatch = 0L]
@@ -115,7 +119,7 @@ single <- unique(single[, .(fips, cu_number)])
 single[cu[, .(cu_number, fips_last)], on = "cu_number", hq_fips := i.fips_last]
 single[, hq_elsewhere := hq_fips != fips]
 p4 <- ggplot() + base_layers("m4") +
-  scale_fill_manual(values = c("Non-rural" = C_NONRURAL, "No office" = "#F3F5F4", "Exactly one credit union" = "#E8A24A", "Two or more" = C_TEAL[2]),
+  scale_fill_manual(values = c("Non-rural" = C_NONRURAL, "No office" = C_UNRATED, "Exactly one credit union" = "#E8A24A", "Two or more" = C_TEAL[3]),
                     name = NULL, drop = FALSE) +
   labs(title = sprintf("%d rural counties are served by exactly one credit union", K[rural24 == 1L & cus == 1L, .N]),
        subtitle = sprintf("In %d of them the sole provider is headquartered in another county. One merger away from none.",
@@ -136,10 +140,27 @@ acs_get <- function(vars, year = 2023, survey = "acs5") {
   for (v in vars) d[, (v) := as.numeric(get(v))]
   d[, c("fips", vars), with = FALSE]
 }
-acs <- acs_get(c("B28002_001E", "B28002_004E",        # households; with broadband subscription
+## FALLBACK: if the API is blocked, download each table from data.census.gov as
+## CSV into CACHE_DIR (files named e.g. ACSDT5Y2023.B28002-Data.csv) and this
+## reader takes over automatically.
+acs_csv <- function(table) {
+  f <- list.files(CACHE_DIR, paste0("ACSDT5Y2023\\.", table, "-Data\\.csv$"), full.names = TRUE)[1]
+  if (is.na(f)) return(NULL)
+  d <- fread(f, skip = 1, colClasses = "character", showProgress = FALSE)
+  setnames(d, tolower(gsub("[^A-Za-z0-9]+", "_", names(d))))
+  d[, fips := sub("^.*US", "", geography)]
+  d
+}
+acs_get_any <- function(vars) {
+  key <- Sys.getenv("CENSUS_API_KEY")
+  if (nzchar(key)) return(tryCatch(acs_get(vars), error = function(e) { message("API failed: ", conditionMessage(e), " -- trying CSVs"); NULL }))
+  NULL
+}
+acs <- acs_get_any(c("B28002_001E", "B28002_004E",        # households; with broadband subscription
                  "B01002_001E",                       # median age
                  "B08201_001E", "B08201_002E",        # households; with no vehicle
                  "B17001_001E", "B17001_002E"))       # poverty universe; below poverty
+if (is.null(acs)) stop("No ACS data: set CENSUS_API_KEY, or place the four data.census.gov CSVs (B28002, B01002, B08201, B17001) in CACHE_DIR and adapt acs_csv().")
 acs[, `:=`(broadband_pct = 100 * B28002_004E / B28002_001E, median_age = B01002_001E,
            no_vehicle_pct = 100 * B08201_002E / B08201_001E, poverty_pct = 100 * B17001_002E / B17001_001E)]
 K <- merge(K, acs[, .(fips, broadband_pct, median_age, no_vehicle_pct, poverty_pct)], by = "fips", all.x = TRUE)
@@ -150,6 +171,7 @@ biv <- function(var, lab, name, title, low_is_bad = TRUE) {
   K[, tier := fifelse(get(var) <= q[1], "low", fifelse(get(var) <= q[2], "mid", "high"))]
   if (!low_is_bad) K[, tier := fifelse(tier == "low", "high", fifelse(tier == "high", "low", tier))]  # so "low" always = worse
   K[, cell := fifelse(rural24 == 0L, "Non-rural", paste(fifelse(has_office, "office", "no office"), tier, sep = " | "))]
+  K[, cell := fac(cell, c("Non-rural", "office | high", "office | mid", "office | low", "no office | high", "no office | mid", "no office | low"))]
   M <- merge(cty_sf, K, by = "fips", all.x = TRUE)
   pal <- c("Non-rural" = C_NONRURAL,
            "office | high" = "#DCE6E4", "office | mid" = "#9FC3C1", "office | low" = "#5E9C99",
@@ -193,6 +215,7 @@ K[, m9 := fifelse(rural24 == 0L, "Non-rural",
           fifelse(farming %in% TRUE & !has_office, "Farming-dependent, no office",
           fifelse(farming %in% TRUE, "Farming-dependent, has office",
           fifelse(!has_office, "Other rural, no office", "Other rural, has office"))))]
+K[, m9 := fac(m9, c("Non-rural", "Other rural, has office", "Other rural, no office", "Farming-dependent, has office", "Farming-dependent, no office"))]
 M <- merge(cty_sf, K, by = "fips", all.x = TRUE)
 p9 <- ggplot() + base_layers("m9") +
   scale_fill_manual(values = c("Non-rural" = C_NONRURAL, "Farming-dependent, no office" = "#A63E27", "Farming-dependent, has office" = "#0E4C55",
@@ -208,12 +231,13 @@ K[, m10 := fifelse(is.na(rural13), "No 2013 code",
            fifelse(rural13 == 1L & rural24 == 0L, "Was rural, now not",
            fifelse(rural13 == 0L & rural24 == 1L, "Became rural",
            fifelse(rural24 == 1L, "Rural both", "Non-rural both"))))]
+K[, m10 := fac(m10, c("Non-rural both", "Rural both", "Was rural, now not", "Became rural", "No 2013 code"))]
 M <- merge(cty_sf, K, by = "fips", all.x = TRUE)
 caught <- cu[cu_number %in% cr[qidx == QZ, unique(cu_number)]][
   K[m10 == "Was rural, now not", .(fips)], on = .(fips_last = fips), nomatch = 0L]
 caught <- merge(caught[, .(cu_number, fips = fips_last)], cent_dt, by = "fips")
 p10 <- ggplot() + base_layers("m10") +
-  scale_fill_manual(values = c("Non-rural both" = C_NONRURAL, "Rural both" = C_TEAL[1], "Was rural, now not" = "#C8553D",
+  scale_fill_manual(values = c("Non-rural both" = C_NONRURAL, "Rural both" = C_RURAL_BASE, "Was rural, now not" = "#C8553D",
                                "Became rural" = "#1F6F78", "No 2013 code" = "#FFFFFF"), name = NULL, drop = FALSE) +
   geom_point(data = caught, aes(X, Y), colour = "#12202E", size = 1.6, shape = 21, fill = "#E8A24A") +
   labs(title = sprintf("%d counties stopped being rural between the 2013 and 2024 classifications; %d became rural",
