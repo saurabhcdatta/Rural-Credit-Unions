@@ -214,15 +214,33 @@ if (is.na(typ_file)) stop("Save the ERS County Typology Codes CSV (2025 or 2015 
 TYP_EDITION <- if (grepl("2025", typ_file)) "2025" else "2015"
 first <- tolower(readLines(typ_file, n = 3, warn = FALSE))
 if (any(grepl("<html|<!doctype|<p>", first))) stop(typ_file, " is an HTML page (proxy block), not a CSV. Re-download it in a browser.")
-typ <- fread(typ_file, colClasses = "character", fill = TRUE)
-setnames(typ, tolower(gsub("[^A-Za-z0-9]+", "_", names(typ))))
-print(names(typ))                                                                    ## LOOK -- 2025 edition column names
-fips_col <- grep("^fips|fipstxt|^fip|geoid", names(typ), value = TRUE)[1]
-fcol     <- grep("^farming|farm_dep|farming_dep", names(typ), value = TRUE)[1]
-if (is.na(fips_col) || is.na(fcol)) stop("Typology file columns not recognised. Names are: ", paste(names(typ), collapse = ", "))
-cat("Typology: using", fips_col, "and", fcol, "\n")
-typ <- typ[, .(fips = sprintf("%05d", suppressWarnings(as.integer(get(fips_col)))),
-               farming = toupper(trimws(get(fcol))) %in% c("1", "TRUE", "YES", "Y"))][!is.na(fips)]
+typ_raw <- fread(typ_file, colClasses = "character", fill = TRUE)
+setnames(typ_raw, tolower(gsub("[^A-Za-z0-9]+", "_", names(typ_raw))))
+print(names(typ_raw))                                                                ## LOOK
+
+if (all(c("attribute", "value") %in% names(typ_raw))) {
+  ## 2025 edition: LONG -- one row per county x attribute. Reshape to wide.
+  fips_col <- grep("^fipstxt$|^fips$|geoid", names(typ_raw), value = TRUE)[1]
+  typ_raw[, `:=`(fips = sprintf("%05d", suppressWarnings(as.integer(get(fips_col)))),
+                 attr = tolower(gsub("[^A-Za-z0-9]+", "_", attribute)),
+                 val  = suppressWarnings(as.numeric(value)))]
+  typ <- dcast(typ_raw[!is.na(fips)], fips ~ attr, value.var = "val", fun.aggregate = function(x) x[1])
+  print(setdiff(names(typ), "fips"))                                                 ## LOOK -- the ERS designations available
+  fcol <- grep("^high_farming", names(typ), value = TRUE)[1]
+  ppov <- grep("^persistent_poverty", names(typ), value = TRUE)[1]
+  ploss <- grep("^population_loss", names(typ), value = TRUE)[1]
+  typ[, farming := get(fcol) == 1]
+  if (!is.na(ppov))  typ[, persistent_poverty := get(ppov) == 1]
+  if (!is.na(ploss)) typ[, population_loss := get(ploss) == 1]
+  typ <- typ[, intersect(c("fips", "farming", "persistent_poverty", "population_loss"), names(typ)), with = FALSE]
+} else {
+  ## 2015 edition: WIDE
+  fips_col <- grep("^fips|fipstxt|^fip|geoid", names(typ_raw), value = TRUE)[1]
+  fcol     <- grep("^farming", names(typ_raw), value = TRUE)[1]
+  if (is.na(fips_col) || is.na(fcol)) stop("Typology columns not recognised: ", paste(names(typ_raw), collapse = ", "))
+  typ <- typ_raw[, .(fips = sprintf("%05d", suppressWarnings(as.integer(get(fips_col)))),
+                     farming = toupper(trimws(get(fcol))) %in% c("1", "TRUE", "YES", "Y"))][!is.na(fips)]
+}
 cat("Farming-dependent counties in the", TYP_EDITION, "edition:", typ[farming == TRUE, .N], "\n")   ## LOOK -- expect a few hundred
 K <- merge(K, typ, by = "fips", all.x = TRUE)
 K[, m9 := fifelse(rural24 == 0L, "Non-rural",
