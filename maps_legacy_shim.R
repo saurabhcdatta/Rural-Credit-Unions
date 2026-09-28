@@ -18,12 +18,21 @@ if (!exists("b")) b <- readRDS(file.path(DATA_DIR, "_branch_panel.rds"))
 q_year <- function(q) (q - 1L) %/% 4L
 q_qtr  <- function(q) ((q - 1L) %% 4L) + 1L
 q_lab  <- function(q) sprintf("%dQ%d", q_year(q), q_qtr(q))
-if (!exists("dl")) dl <- function(url, dest) {
+if (!exists("dl")) ## Binary-safe check for a proxy block page masquerading as a download.
+## A ZIP starts with the bytes "PK"; anything else is read as text with NULs stripped.
+looks_like_html <- function(f) {
+  b <- readBin(f, "raw", 400L)
+  if (length(b) >= 2L && b[1] == as.raw(0x50) && b[2] == as.raw(0x4b)) return(FALSE)   # ZIP
+  b[b == as.raw(0)] <- as.raw(32)
+  txt <- tolower(iconv(rawToChar(b), from = "", to = "ASCII", sub = ""))
+  grepl("<html|<!doctype", txt)
+}
+dl <- function(url, dest) {
   if (file.exists(dest) && file.size(dest) > 0) return(invisible(dest))
   for (m in c("curl", "libcurl", "auto")) {
     ok <- tryCatch({ download.file(url, dest, mode = "wb", method = m, quiet = TRUE); TRUE }, error = function(e) FALSE, warning = function(w) FALSE)
     if (ok && file.exists(dest) && file.size(dest) > 0) {
-      if (any(grepl("<html|<!doctype", tolower(readLines(dest, n = 2, warn = FALSE))))) { unlink(dest); next }
+      if (looks_like_html(dest)) { unlink(dest); next }
       return(invisible(dest))
     }
   }
