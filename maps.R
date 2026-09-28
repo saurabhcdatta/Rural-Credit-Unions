@@ -32,9 +32,14 @@ TH <- theme_void(base_size = 12) +
   theme(plot.title = element_text(face = "bold", size = 15, hjust = 0),
         plot.subtitle = element_text(size = 10.5, colour = "#5B6B72", hjust = 0),
         plot.caption = element_text(size = 8, colour = "#5B6B72", hjust = 0),
-        legend.position = c(0.885, 0.27), legend.title = element_text(size = 9, face = "bold"), legend.text = element_text(size = 8.5), legend.key.size = unit(0.42, "cm"),
+        legend.position = "bottom", legend.direction = "horizontal", legend.box = "horizontal",
+        legend.title = element_text(size = 9, face = "bold"), legend.text = element_text(size = 8.5),
+        legend.key.size = unit(0.4, "cm"), legend.spacing.x = unit(0.3, "cm"),
         plot.margin = margin(8, 8, 8, 8))
-sv <- function(p, name) ggsave(file.path(MAP_DIR, paste0(name, ".png")), p, width = 11, height = 7, dpi = 300, bg = "white")
+## legend grid: nrow rows, filled by row. Bivariate maps use nrow = 2 -> a 2 x 3 grid.
+leg <- function(nrow = 1) guides(fill = guide_legend(nrow = nrow, byrow = TRUE, title.position = "top"),
+                                  size = guide_legend(nrow = 1, title.position = "top"))
+sv <- function(p, name) ggsave(file.path(MAP_DIR, paste0(name, ".png")), p, width = 11, height = 7.6, dpi = 300, bg = "white")
 CAP <- function(extra = "") paste(strwrap(paste0(
   "Rural = county neither in nor adjacent to a metro area (12 CFR 1026.35, via USDA-ERS 2024 Urban Influence Codes). ",
   "Offices = headquarters and branches, ", q_lab(QZ), ". ", extra, " Preliminary."), width = 165), collapse = "\n")
@@ -74,7 +79,7 @@ p1 <- ggplot() + base_layers("m1") +
   labs(title = sprintf("%d rural credit unions, headquartered in %d of %d rural counties",
                        nrow(hq), uniqueN(hq$fips), K[rural24 == 1L, .N]),
        subtitle = "One dot per rural credit union headquarters, sized by assets. Rural counties shaded.",
-       caption = CAP()) + TH
+       caption = CAP()) + TH + leg(1)
 sv(p1, "map01_rural_cu_distribution")
 
 ## ---- MAP 2  rural residents per office --------------------------------------
@@ -92,7 +97,7 @@ p2 <- ggplot() + base_layers("m2") +
                     name = "Residents per\ncredit union office", drop = FALSE) +
   labs(title = "How many rural residents each credit union office serves",
        subtitle = "Rural counties only. Red = no office of any kind. Counties under 2,000 residents not rated.",
-       caption = CAP("Population: Census county estimates, 2024.")) + TH
+       caption = CAP("Population: Census county estimates, 2024.")) + TH + leg(2)
 sv(p2, "map02_residents_per_office")
 
 ## ---- MAP 3  the counties with no office, shaded by people -------------------
@@ -107,7 +112,7 @@ p3 <- ggplot() + base_layers("m3") +
                     name = "Residents in counties\nwith NO office", drop = FALSE) +
   labs(title = sprintf("%d rural counties have no credit union office \u2014 %.1f million people", n_no, pop_no / 1e6),
        subtitle = "Darker = more people living in a county with nothing. Non-rural counties and covered rural counties in grey.",
-       caption = CAP("Population: Census county estimates, 2024.")) + TH
+       caption = CAP("Population: Census county estimates, 2024.")) + TH + leg(1)
 sv(p3, "map03_no_office_by_population")
 
 ## ---- MAP 4  one merger away: single-provider counties -----------------------
@@ -125,7 +130,7 @@ p4 <- ggplot() + base_layers("m4") +
   labs(title = sprintf("%d rural counties are served by exactly one credit union", K[rural24 == 1L & cus == 1L, .N]),
        subtitle = sprintf("In %d of them the sole provider is headquartered in another county.\nOne merger away from none.",
                           single[hq_elsewhere == TRUE, uniqueN(fips)]),
-       caption = CAP()) + TH
+       caption = CAP()) + TH + leg(1)
 sv(p4, "map04_single_provider")
 
 ## ---- Census ACS pull (one call per variable, county level) ------------------
@@ -191,12 +196,11 @@ biv <- function(var, lab, name, title, worse = "low", unit = "%", digits = 0, lo
   p <- ggplot() + geom_sf(data = M, aes(fill = cell), colour = C_CTY, linewidth = 0.05) +
     geom_sf(data = st_sf, fill = NA, colour = C_STATE, linewidth = 0.3) +
     scale_fill_manual(values = pal, breaks = lv[-1], drop = FALSE,
-                      name = paste0("Credit union office  \u00B7  ", lab, "\nThirds are among rural counties only")) +
+                      name = paste0("Credit union office  \u00B7  ", lab, "  (thirds are among rural counties only)")) +
     labs(title = sprintf(title, n_worst, pop_worst / 1e6),
          subtitle = paste0("Rural counties split into thirds by ", tolower(lab), ", crossed with whether any credit union office exists.\n",
                            "Teal = has an office, red = none; darker = the worse third. Dark red is the worst of both."),
-         caption = CAP("Census ACS 2019\u20132023 five-year estimates.")) + TH +
-    theme(legend.position = c(0.855, 0.24))
+         caption = CAP("Census ACS 2019\u20132023 five-year estimates.")) + TH + leg(2)
   sv(p, name); p
 }
 
@@ -273,7 +277,7 @@ p9 <- ggplot() + base_layers("m9") +
   labs(title = sprintf("Of %d farming-dependent rural counties, %d have no credit union office",
                        K[rural24 == 1L & farming %in% TRUE, .N], K[rural24 == 1L & farming %in% TRUE & !has_office, .N]),
        subtitle = "USDA ERS county typology: farming accounts for a large share of county earnings or employment.",
-       caption = CAP(sprintf("USDA ERS County Typology Codes, %s edition.", TYP_EDITION))) + TH
+       caption = CAP(sprintf("USDA ERS County Typology Codes, %s edition.", TYP_EDITION))) + TH + leg(1)
 sv(p9, "map09_farming_counties_x_office")
 
 ## ---- MAP 10  reclassification 2013 -> 2024 (Q12) ----------------------------
@@ -293,7 +297,7 @@ p10 <- ggplot() + base_layers("m10") +
   labs(title = sprintf("%d counties stopped being rural between the 2013 and 2024 classifications; %d became rural",
                        K[m10 == "Was rural, now not", .N], K[m10 == "Became rural", .N]),
        subtitle = sprintf("Dots: the %d credit unions headquartered in counties that lost rural status \u2014 rural in 2013 terms, not today.", nrow(caught)),
-       caption = CAP("Vintage comparison: ERS 2013 vs 2024 Urban Influence Codes.")) + TH
+       caption = CAP("Vintage comparison: ERS 2013 vs 2024 Urban Influence Codes.")) + TH + leg(1)
 sv(p10, "map10_reclassification_2013_2024")
 
 cat("\nTen maps written to", MAP_DIR, "\n")
