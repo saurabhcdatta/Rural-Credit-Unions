@@ -59,7 +59,7 @@ p13 <- ggplot() +
   scale_fill_manual(values = pal, breaks = names(pal), drop = FALSE, na.value = C_NONRURAL,
                     name = "Distance to nearest credit union office  \u00B7  Residents per square mile   (thirds among rural counties)") +
   labs(title = sprintf("%d rural counties are both far from a credit union office and comparatively densely settled\n\u2014 %.1f million people in the corner that is not explained by emptiness", nrow(fd), fd[, sum(pop)] / 1e6),
-       subtitle = "Read across for density, down for distance. Grey = expected: few people, far from an office. Dark purple = the policy problem: many people, far from an office.",
+       subtitle = "Read across for density, down for distance.\nTan = expected: few people, far from an office. Dark purple = the policy problem: many people, far from an office. Blue = settled rural counties with an office nearby.",
        caption = CAP("Distance from Census 2020 tract population centres to ZIP-centroid office locations. Density from Census county land area and 2024 population.")) + TH + leg(3)
 sv(p13, "map13_distance_x_density")
 fwrite(fd[order(-pop), .(fips, pop, miles_wmean = round(miles_wmean, 1), density = round(density, 1), share_over_10 = round(100 * share_over_10, 1))],
