@@ -32,11 +32,12 @@ TH <- theme_void(base_size = 12) +
   theme(plot.title = element_text(face = "bold", size = 15, hjust = 0),
         plot.subtitle = element_text(size = 10.5, colour = "#5B6B72", hjust = 0),
         plot.caption = element_text(size = 8, colour = "#5B6B72", hjust = 0),
-        legend.position = c(0.90, 0.28), legend.title = element_text(size = 9), legend.text = element_text(size = 8.5),
+        legend.position = c(0.885, 0.27), legend.title = element_text(size = 9, face = "bold"), legend.text = element_text(size = 8.5), legend.key.size = unit(0.42, "cm"),
         plot.margin = margin(8, 8, 8, 8))
 sv <- function(p, name) ggsave(file.path(MAP_DIR, paste0(name, ".png")), p, width = 11, height = 7, dpi = 300, bg = "white")
-CAP <- function(extra = "") paste0("Rural = county neither in nor adjacent to a metro area (12 CFR 1026.35, via USDA-ERS 2024 Urban Influence Codes). ",
-                                   "Offices = headquarters and branches, ", q_lab(QZ), ". ", extra, " Preliminary.")
+CAP <- function(extra = "") paste(strwrap(paste0(
+  "Rural = county neither in nor adjacent to a metro area (12 CFR 1026.35, via USDA-ERS 2024 Urban Influence Codes). ",
+  "Offices = headquarters and branches, ", q_lab(QZ), ". ", extra, " Preliminary."), width = 165), collapse = "\n")
 POP_FLOOR <- 2000
 fac <- function(x, lv) factor(x, levels = lv)   # explicit legend order; never alphabetical
 
@@ -122,7 +123,7 @@ p4 <- ggplot() + base_layers("m4") +
   scale_fill_manual(values = c("Non-rural" = C_NONRURAL, "No office" = C_UNRATED, "Exactly one credit union" = "#E8A24A", "Two or more" = C_TEAL[3]),
                     name = NULL, drop = FALSE) +
   labs(title = sprintf("%d rural counties are served by exactly one credit union", K[rural24 == 1L & cus == 1L, .N]),
-       subtitle = sprintf("In %d of them the sole provider is headquartered in another county. One merger away from none.",
+       subtitle = sprintf("In %d of them the sole provider is headquartered in another county.\nOne merger away from none.",
                           single[hq_elsewhere == TRUE, uniqueN(fips)]),
        caption = CAP()) + TH
 sv(p4, "map04_single_provider")
@@ -165,42 +166,59 @@ acs[, `:=`(broadband_pct = 100 * B28002_004E / B28002_001E, median_age = B01002_
            no_vehicle_pct = 100 * B08201_002E / B08201_001E, poverty_pct = 100 * B17001_002E / B17001_001E)]
 K <- merge(K, acs[, .(fips, broadband_pct, median_age, no_vehicle_pct, poverty_pct)], by = "fips", all.x = TRUE)
 
-## bivariate helper: a Census measure (low/mid/high tercile among RURAL counties) x office presence
-biv <- function(var, lab, name, title, low_is_bad = TRUE) {
+## bivariate helper: a Census measure split into thirds among RURAL counties,
+## crossed with office presence. Legend labels name the third and its cut point.
+##   worse = "low"  : a LOW value is the bad end (broadband)
+##   worse = "high" : a HIGH value is the bad end (age, no-vehicle, poverty)
+biv <- function(var, lab, name, title, worse = "low", unit = "%", digits = 0, lo_word = "lowest", hi_word = "highest") {
   q <- K[rural24 == 1L & !is.na(get(var)), quantile(get(var), c(1/3, 2/3), na.rm = TRUE)]
-  K[, tier := fifelse(get(var) <= q[1], "low", fifelse(get(var) <= q[2], "mid", "high"))]
-  if (!low_is_bad) K[, tier := fifelse(tier == "low", "high", fifelse(tier == "high", "low", tier))]  # so "low" always = worse
-  K[, cell := fifelse(rural24 == 0L, "Non-rural", paste(fifelse(has_office, "office", "no office"), tier, sep = " | "))]
-  K[, cell := fac(cell, c("Non-rural", "office | high", "office | mid", "office | low", "no office | high", "no office | mid", "no office | low"))]
+  f <- function(x) paste0(formatC(x, format = "f", digits = digits), unit)
+  third <- fifelse(K[[var]] <= q[1], "lo", fifelse(K[[var]] <= q[2], "mid", "hi"))
+  ## rank each third from best (1) to worst (3)
+  rank <- if (worse == "low") c(lo = 3L, mid = 2L, hi = 1L) else c(lo = 1L, mid = 2L, hi = 3L)
+  lab3 <- c(lo = sprintf("%s third (under %s)", lo_word, f(q[1])),
+            mid = sprintf("middle third (%s to %s)", f(q[1]), f(q[2])),
+            hi  = sprintf("%s third (over %s)", hi_word, f(q[2])))
+  ord  <- names(sort(rank))                       # best -> worst
+  K[, cell := fifelse(rural24 == 0L, "Non-rural",
+             paste(fifelse(has_office, "Has an office", "No office"), "\u00B7", lab3[third]))]
+  lv <- c("Non-rural", paste("Has an office", "\u00B7", lab3[ord]), paste("No office", "\u00B7", lab3[ord]))
+  K[, cell := fac(cell, lv)]
   M <- merge(cty_sf, K, by = "fips", all.x = TRUE)
-  pal <- c("Non-rural" = C_NONRURAL,
-           "office | high" = "#DCE6E4", "office | mid" = "#9FC3C1", "office | low" = "#5E9C99",
-           "no office | high" = "#F2D3CB", "no office | mid" = "#E08C72", "no office | low" = "#A63E27")
-  n_worst <- K[cell == "no office | low", .N]; pop_worst <- K[cell == "no office | low", sum(pop, na.rm = TRUE)]
+  pal <- setNames(c(C_NONRURAL, "#DCE6E4", "#9FC3C1", "#5E9C99", "#F2D3CB", "#E08C72", "#A63E27"), lv)
+  worst <- lv[7]
+  n_worst <- K[cell == worst, .N]; pop_worst <- K[cell == worst, sum(pop, na.rm = TRUE)]
   p <- ggplot() + geom_sf(data = M, aes(fill = cell), colour = C_CTY, linewidth = 0.05) +
     geom_sf(data = st_sf, fill = NA, colour = C_STATE, linewidth = 0.3) +
-    scale_fill_manual(values = pal, name = paste0("Office presence |\n", lab), breaks = names(pal)[-1], drop = FALSE) +
+    scale_fill_manual(values = pal, breaks = lv[-1], drop = FALSE,
+                      name = paste0("Credit union office  \u00B7  ", lab, "\nThirds are among rural counties only")) +
     labs(title = sprintf(title, n_worst, pop_worst / 1e6),
-         subtitle = sprintf("Rural counties in terciles of %s (among rural counties), crossed with whether any credit union office exists. Dark red = worst on both.", tolower(lab)),
-         caption = CAP("Census ACS 2019-2023 five-year estimates.")) + TH
+         subtitle = paste0("Rural counties split into thirds by ", tolower(lab), ", crossed with whether any credit union office exists.\n",
+                           "Teal = has an office, red = none; darker = the worse third. Dark red is the worst of both."),
+         caption = CAP("Census ACS 2019\u20132023 five-year estimates.")) + TH +
+    theme(legend.position = c(0.855, 0.24))
   sv(p, name); p
 }
 
 ## ---- MAP 5  broadband x offices ---------------------------------------------
 p5 <- biv("broadband_pct", "Broadband subscription", "map05_broadband_x_office",
-          "%d rural counties have no credit union office AND the lowest broadband \u2014 %.1f million people for whom online banking is not the answer")
+          "%d rural counties have no credit union office AND the lowest broadband\n\u2014 %.1f million people for whom online banking is not the answer",
+          worse = "low", unit = "%", lo_word = "lowest", hi_word = "highest")
 
 ## ---- MAP 6  age x offices ---------------------------------------------------
 p6 <- biv("median_age", "Median age", "map06_age_x_office",
-          "%d rural counties are among the oldest AND have no credit union office \u2014 %.1f million people", low_is_bad = FALSE)
+          "%d rural counties are among the oldest AND have no credit union office\n\u2014 %.1f million people",
+          worse = "high", unit = " years", lo_word = "youngest", hi_word = "oldest")
 
 ## ---- MAP 7  no vehicle x offices --------------------------------------------
 p7 <- biv("no_vehicle_pct", "Households without a vehicle", "map07_no_vehicle_x_office",
-          "%d rural counties have no office AND the most households without a car \u2014 %.1f million people", low_is_bad = FALSE)
+          "%d rural counties have no office AND the most households without a car\n\u2014 %.1f million people",
+          worse = "high", unit = "%", digits = 1, lo_word = "fewest car-free", hi_word = "most car-free")
 
 ## ---- MAP 8  poverty x offices -----------------------------------------------
 p8 <- biv("poverty_pct", "Poverty rate", "map08_poverty_x_office",
-          "%d rural counties have no office AND the highest poverty \u2014 %.1f million people", low_is_bad = FALSE)
+          "%d rural counties have no office AND the highest poverty\n\u2014 %.1f million people",
+          worse = "high", unit = "%", lo_word = "lowest", hi_word = "highest")
 
 ## ---- MAP 9  farming-dependent counties and credit union presence ------------
 ## USDA ERS County Typology Codes (2015 edition, farming_2015_update flag).
