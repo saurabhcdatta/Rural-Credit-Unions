@@ -22,7 +22,10 @@ if (!exists("dl")) dl <- function(url, dest) {
   if (file.exists(dest) && file.size(dest) > 0) return(invisible(dest))
   for (m in c("curl", "libcurl", "auto")) {
     ok <- tryCatch({ download.file(url, dest, mode = "wb", method = m, quiet = TRUE); TRUE }, error = function(e) FALSE, warning = function(w) FALSE)
-    if (ok && file.exists(dest) && file.size(dest) > 0) return(invisible(dest))
+    if (ok && file.exists(dest) && file.size(dest) > 0) {
+      if (any(grepl("<html|<!doctype", tolower(readLines(dest, n = 2, warn = FALSE))))) { unlink(dest); next }
+      return(invisible(dest))
+    }
   }
   stop("Could not download ", url, " -- save it manually as ", dest)
 }

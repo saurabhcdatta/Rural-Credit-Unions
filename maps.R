@@ -204,12 +204,26 @@ p8 <- biv("poverty_pct", "Poverty rate", "map08_poverty_x_office",
 
 ## ---- MAP 9  farming-dependent counties and credit union presence ------------
 ## USDA ERS County Typology Codes (2015 edition, farming_2015_update flag).
-typ_file <- dl("https://www.ers.usda.gov/media/10763/2015countytypologycodes.csv",
-               file.path(CACHE_DIR, "2015countytypologycodes.csv"))
-typ <- fread(typ_file, colClasses = "character")
+## The ERS file is fetched by hand: open ers.usda.gov/data-products/county-typology-codes,
+## download the 2015 County Typology Codes CSV, save it as the path below.
+## Takes whichever edition is in CACHE_DIR: 2025 edition preferred, 2015 as fallback.
+typ_file <- c(file.path(CACHE_DIR, "erscountytypology2025edition.csv"),
+              file.path(CACHE_DIR, "2015countytypologycodes.csv"))
+typ_file <- typ_file[file.exists(typ_file)][1]
+if (is.na(typ_file)) stop("Save the ERS County Typology Codes CSV (2025 or 2015 edition) in ", CACHE_DIR)
+TYP_EDITION <- if (grepl("2025", typ_file)) "2025" else "2015"
+first <- tolower(readLines(typ_file, n = 3, warn = FALSE))
+if (any(grepl("<html|<!doctype|<p>", first))) stop(typ_file, " is an HTML page (proxy block), not a CSV. Re-download it in a browser.")
+typ <- fread(typ_file, colClasses = "character", fill = TRUE)
 setnames(typ, tolower(gsub("[^A-Za-z0-9]+", "_", names(typ))))
-fcol <- grep("^farming", names(typ), value = TRUE)[1]; fips_col <- grep("fip", names(typ), value = TRUE)[1]
-typ <- typ[, .(fips = sprintf("%05d", as.integer(get(fips_col))), farming = as.integer(get(fcol)) == 1L)]
+print(names(typ))                                                                    ## LOOK -- 2025 edition column names
+fips_col <- grep("^fips|fipstxt|^fip|geoid", names(typ), value = TRUE)[1]
+fcol     <- grep("^farming|farm_dep|farming_dep", names(typ), value = TRUE)[1]
+if (is.na(fips_col) || is.na(fcol)) stop("Typology file columns not recognised. Names are: ", paste(names(typ), collapse = ", "))
+cat("Typology: using", fips_col, "and", fcol, "\n")
+typ <- typ[, .(fips = sprintf("%05d", suppressWarnings(as.integer(get(fips_col)))),
+               farming = toupper(trimws(get(fcol))) %in% c("1", "TRUE", "YES", "Y"))][!is.na(fips)]
+cat("Farming-dependent counties in the", TYP_EDITION, "edition:", typ[farming == TRUE, .N], "\n")   ## LOOK -- expect a few hundred
 K <- merge(K, typ, by = "fips", all.x = TRUE)
 K[, m9 := fifelse(rural24 == 0L, "Non-rural",
           fifelse(farming %in% TRUE & !has_office, "Farming-dependent, no office",
@@ -223,7 +237,7 @@ p9 <- ggplot() + base_layers("m9") +
   labs(title = sprintf("Of %d farming-dependent rural counties, %d have no credit union office",
                        K[rural24 == 1L & farming %in% TRUE, .N], K[rural24 == 1L & farming %in% TRUE & !has_office, .N]),
        subtitle = "USDA ERS county typology: farming accounts for a large share of county earnings or employment.",
-       caption = CAP("USDA ERS County Typology Codes, 2015 edition.")) + TH
+       caption = CAP(sprintf("USDA ERS County Typology Codes, %s edition.", TYP_EDITION))) + TH
 sv(p9, "map09_farming_counties_x_office")
 
 ## ---- MAP 10  reclassification 2013 -> 2024 (Q12) ----------------------------
