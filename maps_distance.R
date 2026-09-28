@@ -55,6 +55,7 @@ cenco <- fread(co_file, colClasses = "character", showProgress = FALSE)
 cenco <- cenco[, .(fips = paste0(STATEFP, COUNTYFP), lon = as.numeric(LONGITUDE), lat = as.numeric(LATITUDE))]
 
 ## ---- D2  offices at the latest quarter, located --------------------------------
+if (!"in_cr" %in% names(sites)) sites[, in_cr := cu_number %in% unique(cr$cu_number)]
 off <- sites[qidx == QZ & in_cr == TRUE & !foreign & !terr & !is.na(fips),
              .(cu_number, site_id, fips, zip5, main_office)]
 off[zcta, on = "zip5", `:=`(lon = i.lon, lat = i.lat, src = "ZIP centroid")]

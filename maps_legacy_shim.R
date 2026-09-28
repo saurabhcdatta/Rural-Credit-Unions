@@ -60,10 +60,14 @@ county[, `:=`(is_state_or_dc = as.integer(substr(fips, 1, 2)) <= 56L, ct = state
 setkey(county, fips)
 
 ## ---- sites and offices_q ----------------------------------------------------
-sites <- b
+sites <- copy(b)
 if (!"foreign" %in% names(sites)) sites[, foreign := FALSE]
 if (!"terr"    %in% names(sites)) sites[, terr := FALSE]
-offices_q <- sites[!foreign & !terr & !is.na(fips) & !is.na(rural_site),
+## in_cr: site belongs to a credit union in the Call Report universe (type 1-2).
+## The master build sets this in M3; the shim has to derive it from cr.
+sites[, in_cr := cu_number %in% unique(cr$cu_number)]
+sites[fips %in% c("02063", "02066"), fips := "02261"]     # Alaska fold, as in the master
+offices_q <- sites[in_cr == TRUE & !foreign & !terr & !is.na(fips) & !is.na(rural_site),
                    .(offices = .N, hqs = sum(main_office), branches = sum(!main_office), cus = uniqueN(cu_number)),
                    by = .(fips, qidx)]
 setkey(offices_q, fips, qidx)
