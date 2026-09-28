@@ -77,19 +77,19 @@ S_dt[, dist_bin := fac(as.character(cut(miles_wmean, c(-Inf, 10, 20, 40, Inf), l
 base14 <- merge(cty_sf, county[is_state_or_dc == TRUE, .(fips, rural24)], by = "fips", all.x = TRUE)
 base14$base <- ifelse(base14$rural24 == 1L, "Rural county", "Non-rural county")
 p14 <- ggplot() +
-  geom_sf(data = base14, aes(fill = base), colour = C_CTY, linewidth = 0.05, show.legend = FALSE) +
-  scale_fill_manual(values = c("Rural county" = "#F1EEE4", "Non-rural county" = C_NONRURAL)) +
+  geom_sf(data = base14[base14$base == "Non-rural county", ], fill = C_NONRURAL, colour = C_CTY, linewidth = 0.05) +
+  geom_sf(data = base14[base14$base == "Rural county", ],     fill = "#F1EEE4",  colour = C_CTY, linewidth = 0.05) +
   geom_sf(data = st_sf, fill = NA, colour = C_STATE, linewidth = 0.3) +
-  geom_point(data = S_dt[order(-beyond10)], aes(X, Y, size = beyond10, colour = dist_bin), alpha = 0.75, shape = 16) +
-  scale_size_area(max_size = 9, breaks = c(5000, 20000, 50000, 100000), labels = c("5,000", "20,000", "50,000", "100,000"),
+  geom_point(data = S_dt[order(-beyond10)], aes(X, Y, size = beyond10, fill = dist_bin), colour = "white", stroke = 0.25, alpha = 0.65, shape = 21) +
+  scale_size_area(max_size = 7, breaks = c(5000, 20000, 50000, 100000), labels = c("5,000", "20,000", "50,000", "100,000"),
                   name = "Residents more than 10 miles from an office") +
-  scale_colour_manual(values = c("Under 10 miles" = "#7FB0AE", "10-20 miles" = "#E8A24A", "20-40 miles" = "#C8553D", "Over 40 miles" = "#7A2A1A"),
-                      name = "Average distance in the county") +
+  scale_fill_manual(values = c("Under 10 miles" = "#7FB0AE", "10-20 miles" = "#E8A24A", "20-40 miles" = "#C8553D", "Over 40 miles" = "#7A2A1A"),
+                    name = "Average distance in the county") +
   labs(title = sprintf("Where the %.1f million rural residents beyond 10 miles actually live", S_dt[, sum(beyond10)] / 1e6),
-       subtitle = "One circle per rural county at its population centre, sized by residents more than 10 miles from any credit union office. Drawn so people, not acres, carry the visual weight.",
+       subtitle = "One circle per rural county at its population centre, sized by residents more than 10 miles from any credit union office.\nDrawn so people, not acres, carry the visual weight. Same 11.6 million as map 12.",
        caption = CAP("Distance from Census 2020 tract population centres to ZIP-centroid office locations. Circles at Census county population centroids.")) +
-  TH + guides(size = guide_legend(nrow = 1, title.position = "top", override.aes = list(colour = "#5B6B72")),
-              colour = guide_legend(nrow = 1, title.position = "top", override.aes = list(size = 4)))
+  TH + guides(size = guide_legend(nrow = 1, title.position = "top", override.aes = list(fill = "#5B6B72", colour = "white")),
+              fill = guide_legend(nrow = 1, title.position = "top", override.aes = list(size = 4, colour = "white")))
 sv(p14, "map14_people_beyond_10_miles")
 
 cat("\nMaps 13 and 14 written.\n")
