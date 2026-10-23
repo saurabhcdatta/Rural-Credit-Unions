@@ -225,9 +225,23 @@ network <- sites %>%
             .groups = "drop")
 
 ## other credit unions headquartered in the same county, same quarter (cr already carries it)
-competitors <- cr %>%
-  as_tibble() %>%
-  select(cu_number, qidx, n_cus_county)
+## The master's M2 builds n_cus_county; the legacy 3_callreport.R does not,
+## so count it here when it is missing: credit unions in the same county and
+## quarter, minus the credit union itself.
+if (!"n_cus_county" %in% names(cr)) {
+  cat("n_cus_county not in cr (legacy path) -- computing it here\n")
+  competitors <- cr %>%
+    as_tibble() %>%
+    select(cu_number, qidx, fips) %>%
+    group_by(fips, qidx) %>%
+    mutate(n_cus_county = n() - 1L) %>%
+    ungroup() %>%
+    select(cu_number, qidx, n_cus_county)
+} else {
+  competitors <- cr %>%
+    as_tibble() %>%
+    select(cu_number, qidx, n_cus_county)
+}
 
 d <- d %>%
   left_join(county_size, by = "fips") %>%
