@@ -159,10 +159,16 @@ print(pen_growth)                                                               
 ## not the credit union's own form. Members can live outside the county, so
 ## values above 1 occur for institutions with a wide field; read it as a
 ## relative measure.
+## The master's county table carries pop2010; the legacy shim's carries only
+## pop2020 (from ERS) and pop2024. Use the earliest baseline available and say
+## which one the change is measured from.
+POP_BASE <- intersect(c("pop2010", "pop2016", "pop2019", "pop2020"), names(county))[1]
+stopifnot(!is.na(POP_BASE), "pop2024" %in% names(county))
+cat("County population change measured from", POP_BASE, "to pop2024\n")             ## LOOK
 county_pop <- county %>%
   as_tibble() %>%
-  select(fips, pop2024, pop2010) %>%
-  mutate(county_pop_change_pct = 100 * (pop2024 / pop2010 - 1))
+  select(fips, pop2024, pop_base = all_of(POP_BASE)) %>%
+  mutate(county_pop_change_pct = 100 * (pop2024 / pop_base - 1))
 
 d <- d %>%
   left_join(county_pop, by = "fips") %>%
@@ -189,6 +195,21 @@ print(mkt)                                                                      
 ##   distance                        -- share of HQ-county residents more than
 ##                                      10 miles from ANY credit union office
 ##                                      (only when the master's access table exists)
+## Land area: the master's county table has sqmi; the legacy shim's does not,
+## so fetch it once from the Census boundary file (ALAND is square metres).
+if (!"sqmi" %in% names(county)) {
+  suppressPackageStartupMessages(library(tigris))
+  options(tigris_use_cache = TRUE)
+  area <- counties(cb = TRUE, resolution = "20m", year = 2023) %>%
+    sf::st_drop_geometry() %>%
+    as_tibble() %>%
+    transmute(fips = GEOID, sqmi = as.numeric(ALAND) / 2589988.11)
+  area <- area %>%
+    mutate(fips = ifelse(fips %in% c("02063", "02066"), "02261", fips)) %>%      # Alaska fold, as everywhere else
+    group_by(fips) %>%
+    summarise(sqmi = sum(sqmi), .groups = "drop")
+  county <- county %>% left_join(area, by = "fips")
+}
 county_size <- county %>%
   as_tibble() %>%
   select(fips, sqmi) %>%
@@ -399,7 +420,7 @@ if (exists("register_result")) {
   register_result(4, "pct_above_sustainable_rural", r(cap$pct_above_sustainable[cap$rural == 1]), "")
   register_result(4, "penetration_median_rural",    r(pen$penetration_median[pen$rural == 1]), "members / potential members")
   register_result(4, "penetration_median_nonrural", r(pen$penetration_median[pen$rural == 0]), "")
-  register_result(4, "pct_rural_in_shrinking_county", r(mkt$pct_in_shrinking_county[mkt$rural == 1]), "HQ county lost population 2010-2024")
+  register_result(4, "pct_rural_in_shrinking_county", r(mkt$pct_in_shrinking_county[mkt$rural == 1]), sprintf("HQ county lost population %s-2024", sub("pop", "", POP_BASE)))
   register_result(4, "pct_bind_capital_rural", binds$pct_capital[binds$rural == 1], "net worth < 8% or growth above sustainable")
   register_result(4, "pct_bind_members_rural", binds$pct_members[binds$rural == 1], "penetration > 0.5 or shrinking county")
   register_result(4, "pct_bind_funding_rural", binds$pct_funding[binds$rural == 1], "loans > 90% of deposits")
