@@ -1,5 +1,5 @@
 ## =============================================================================
-## 12_q2_v2_2026-10-23.R   (v2: universe gate + 12.3c rural entrants list)
+## 12_q2_v2_2026-10-23.R   (v2: universe gate + 12.3c rural entrants list + 12.7c rural exits list)
 ## Q2 — Are we losing RURAL credit unions, or are we just losing credit unions?
 ##
 ## Rural Credit Unions Study | ROAD Act (P.L. 119-101) Sec. 909
@@ -20,6 +20,7 @@
 ##   12.5  survival — Kaplan-Meier and Cox                    -> Q2_5
 ##   12.6  exit composition by outcome x reason (UNVERIFIED)  -> Q2_6
 ##   12.7  where exiting rural charters go (acquirer rurality)-> Q2_7
+##   12.7c the list of rural exits, one row per CU            -> Q2_7c
 ##   12.8  charter-level HQ relocation across the rural line  -> Q2_8
 ##   12.9  county coverage: rural counties with a local HQ    -> Q2_9
 ##   12.10 write exhibits, print the Q2 answer
@@ -452,6 +453,57 @@ if (!is.na(C$ptr) && !is.na(C$join)) {
 } else {
   message("12.7 skipped — successor pointer or join number not available in `cr`.")
 }
+
+## ---- 12.7c  the list of rural exits ------------------------------------------
+## One row per credit union whose last quarter is before the panel ends and
+## whose headquarters was in a rural county (2024 vintage) in that last quarter.
+## This is the list behind the exit count. It counts each credit union once;
+## the quarterly flow total in 12.3 also counts a temporary drop-out (see `gaps`).
+## Outcome and reason codes are printed as codes: their meanings are still
+## UNVERIFIED (see 12.6), so do not label any row "merger" or "failure" yet.
+
+last_row <- sp[spell[exited == 1L, list(id, last_q)], on = list(id, qidx = last_q)]
+rural_exits <- last_row[r24 == 1L, list(id, st, fips_last = fips, last_q = qidx,
+                                        assets_last = assets, members_last = members,
+                                        nw_last = nw, roa_last = roa)]
+rural_exits <- merge(rural_exits, spell[, list(id, first_q)], by = "id", all.x = TRUE)
+## name, charter type, outcome / reason codes, successor pointer -- whichever cr carries
+if (!is.na(C$name))    rural_exits[cr[, list(id = get(C$id), name = get(C$name))][!duplicated(id)], on = "id", name := i.name]
+if (!is.na(C$ctype))   rural_exits[cr[, list(id = get(C$id), cu_type = get(C$ctype))][!duplicated(id)], on = "id", cu_type := i.cu_type]
+if (!is.na(C$outcome)) rural_exits[last_row, on = list(id, last_q = qidx), outcome := i.outcome]
+if (!is.na(C$reason))  rural_exits[last_row, on = list(id, last_q = qidx), reason  := i.reason]
+## successor: who it went to, looked up in the quarter after the exit
+if (!is.na(C$ptr) && !is.na(C$join)) {
+  rural_exits[last_row, on = list(id, last_q = qidx), successor_join := i.ptr]
+  rural_exits[successor_join %in% c("", "0"), successor_join := NA]
+  succ_info <- sp[, list(successor_join = join, look_q = qidx, successor_id = id, successor_state = st,
+                         successor_rural = r24, successor_assets_m = round(assets / 1e6, 1))]
+  rural_exits[, look_q := last_q + 1L]
+  rural_exits <- merge(rural_exits, succ_info, by = c("successor_join", "look_q"), all.x = TRUE)
+  if (!is.na(C$name)) rural_exits[cr[, list(successor_id = get(C$id), successor_name = get(C$name))][!duplicated(successor_id)],
+                                  on = "successor_id", successor_name := i.successor_name]
+  rural_exits[, look_q := NULL]
+}
+rural_exits[, `:=`(
+  first_quarter = qlab(first_q),
+  exit_quarter  = qlab(last_q),
+  exit_year     = (last_q - 1L) %/% 4L,
+  assets_last_m = round(assets_last / 1e6, 2),
+  in_and_out    = as.integer(id %in% gaps$id)            # had a gap in the panel before leaving
+)]
+setorder(rural_exits, last_q)
+
+cat(sprintf("\n--- 12.7c  Rural exits: %d credit unions (flow total in 12.3: %d)\n",
+            nrow(rural_exits), sum(fl24$exit_rural)))
+if ("cu_type" %in% names(rural_exits)) print(table(cu_type = rural_exits$cu_type))             ## LOOK -- only 1 and 2
+print(rural_exits[, .N, by = exit_year][order(exit_year)])                                       ## LOOK -- exits per year
+if ("outcome" %in% names(rural_exits)) print(rural_exits[, .N, by = outcome][order(-N)])        ## LOOK -- codes only, UNVERIFIED
+if ("successor_rural" %in% names(rural_exits))
+  print(rural_exits[, .N, by = list(successor = fifelse(is.na(successor_rural), "no successor found",
+                                              fifelse(successor_rural == 1L, "rural", "non-rural")))])   ## LOOK
+cat(sprintf("    median assets at exit: $%.1fm\n", median(rural_exits$assets_last_m, na.rm = TRUE)))
+print(rural_exits)                                                                               ## LOOK -- the list
+Q2$Q2_7c_rural_exits <- rural_exits
 
 ## ---- 12.8  charter-level relocation ----------------------------------------
 ## The site-level version (11_) found relocation negligible: 35 of 35,356 sites
