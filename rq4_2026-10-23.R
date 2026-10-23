@@ -438,7 +438,7 @@ decomp_sd <- reg_data %>%
   summarise(roa_lag = sd(roa_lag), networth_lag = sd(networth_lag)) %>%
   pivot_longer(everything(), names_to = "term", values_to = "sd")
 decomp <- tibble(term = names(coef(m_decomp)), coef = coef(m_decomp), se = se(m_decomp)) %>%
-  filter(term %in% c("roa_lag", "networth_lag", "rural:roa_lag", "rural:networth_lag")) %>%
+  filter(term %in% c("roa_lag", "networth_lag", "rural:roa_lag", "rural:networth_lag", "roa_lag:rural", "networth_lag:rural")) %>%
   left_join(decomp_sd, by = "term") %>%
   mutate(t = round(coef / se, 2),
          growth_pp_per_sd = round(coef * sd, 3))
@@ -446,8 +446,10 @@ print(decomp)                                                                   
 
 ## the rural effect of each = main term + rural interaction
 b <- coef(m_decomp)
-rural_roa_effect      <- b["roa_lag"]      + b["rural:roa_lag"]
-rural_networth_effect <- b["networth_lag"] + b["rural:networth_lag"]
+## fixest may name an interaction "rural:x" or "x:rural"; take whichever exists
+int_of <- function(x) { k <- c(paste0("rural:", x), paste0(x, ":rural")); unname(b[k[k %in% names(b)][1]]) }
+rural_roa_effect      <- unname(b["roa_lag"])      + int_of("roa_lag")
+rural_networth_effect <- unname(b["networth_lag"]) + int_of("networth_lag")
 cat(sprintf("Rural: +1 pp of last year's ROA -> %+.2f pp asset growth; +1 pp of last year's net worth ratio -> %+.3f pp.\n",
             rural_roa_effect, rural_networth_effect))                           ## LOOK
 write.csv(decomp, file.path(OUT4, "rq4_earnings_vs_capital.csv"), row.names = FALSE)
