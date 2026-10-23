@@ -374,6 +374,7 @@ print(binds_sens)                                                               
 lagged <- d %>%
   transmute(cu_number, qidx = qidx + 4L,                    # shift forward so year t-1 lines up with year t
             sustainable_growth_lag = sustainable_growth,
+            roa_lag = roa_pct,
             networth_lag = networth_pct)
 d <- d %>% left_join(lagged, by = c("cu_number", "qidx"))
 
@@ -417,6 +418,45 @@ effects <- tibble(term = names(coef(m_growth)), coef = coef(m_growth)) %>%
   mutate(growth_pp_per_sd = round(coef * sd, 3)) %>%
   arrange(desc(abs(growth_pp_per_sd)))
 print(effects)                                                                   ## LOOK -- the biggest row is the constraint that matters most
+
+## ---- 4.6b  DECOMPOSITION: is it earnings or capital? ------------------------
+## sustainable growth = ROA / net worth ratio, so its effect could come from
+## either part. Here the two enter separately, both measured a year earlier.
+##   roa_lag positive, networth_lag ~ 0  -> EARNINGS drive growth, not the capital stock
+##   networth_lag positive              -> more capital really does buy growth
+m_decomp <- feols(
+  g_assets ~ roa_lag + networth_lag + penetration + loan_to_share
+             + county_pop_change_pct + ln_pop + ln_density + ln_offices + ln_competitors + ln_assets
+             + rural:roa_lag + rural:networth_lag + rural:penetration + rural:loan_to_share
+             + rural:county_pop_change_pct + rural:ln_pop + rural:ln_density + rural:ln_offices + rural:ln_competitors
+             | state_quarter,
+  data = reg_data %>% filter(!is.na(roa_lag)), cluster = ~cu_number)
+print(summary(m_decomp))                                                         ## LOOK
+
+decomp_sd <- reg_data %>%
+  filter(!is.na(roa_lag)) %>%
+  summarise(roa_lag = sd(roa_lag), networth_lag = sd(networth_lag)) %>%
+  pivot_longer(everything(), names_to = "term", values_to = "sd")
+decomp <- tibble(term = names(coef(m_decomp)), coef = coef(m_decomp), se = se(m_decomp)) %>%
+  filter(term %in% c("roa_lag", "networth_lag", "rural:roa_lag", "rural:networth_lag")) %>%
+  left_join(decomp_sd, by = "term") %>%
+  mutate(t = round(coef / se, 2),
+         growth_pp_per_sd = round(coef * sd, 3))
+print(decomp)                                                                    ## LOOK -- the earnings-vs-capital answer
+
+## the rural effect of each = main term + rural interaction
+b <- coef(m_decomp)
+rural_roa_effect      <- b["roa_lag"]      + b["rural:roa_lag"]
+rural_networth_effect <- b["networth_lag"] + b["rural:networth_lag"]
+cat(sprintf("Rural: +1 pp of last year's ROA -> %+.2f pp asset growth; +1 pp of last year's net worth ratio -> %+.3f pp.\n",
+            rural_roa_effect, rural_networth_effect))                           ## LOOK
+write.csv(decomp, file.path(OUT4, "rq4_earnings_vs_capital.csv"), row.names = FALSE)
+if (exists("register_result")) {
+  register_result(4, "coef_roa_lag",          round(b["roa_lag"], 3),       "pp asset growth per pp of last year's ROA, like-for-like")
+  register_result(4, "coef_networth_lag",     round(b["networth_lag"], 3),  "pp asset growth per pp of last year's net worth ratio")
+  register_result(4, "rural_roa_effect",      round(rural_roa_effect, 3),   "main + rural interaction")
+  register_result(4, "rural_networth_effect", round(rural_networth_effect, 3), "main + rural interaction")
+}
 
 ## ---- 4.7  one picture: penetration against member growth, rural only ----------
 p <- d %>%
