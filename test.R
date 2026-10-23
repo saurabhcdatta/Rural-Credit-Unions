@@ -15,3 +15,11 @@ m_dem <- feols(g_assets ~ networth_lag * loan_to_share + networth_lag * county_p
                + roa_lag + ln_assets + ln_pop + ln_density + ln_offices | state_quarter,
                data = reg_data %>% filter(rural == 1, !is.na(roa_lag)), cluster = ~cu_number)
 summary(m_dem)
+
+rd <- reg_data %>% filter(rural == 1, !is.na(roa_lag)) %>%
+  mutate(lts_c = loan_to_share - median(loan_to_share),
+         pop_c = county_pop_change_pct - median(county_pop_change_pct, na.rm = TRUE))
+m_dem2 <- feols(g_assets ~ networth_lag * lts_c + networth_lag * pop_c
+                + roa_lag + ln_assets + ln_pop + ln_density + ln_offices | state_quarter,
+                data = rd, cluster = ~cu_number)
+summary(m_dem2)
