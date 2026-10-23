@@ -354,6 +354,7 @@ binds_sens <- latest %>%
          member_bind  = (!is.na(penetration) & penetration > 0.4) | (!is.na(county_pop_change_pct) & county_pop_change_pct < -2),
          funding_bind = !is.na(loan_to_share) & loan_to_share > 0.85,
          reach_bind   = own_offices <= 2L & !is.na(density) & density < rural_median_density * 1.5) %>%
+  mutate(across(c(capital_bind, member_bind, funding_bind, reach_bind), ~ replace_na(.x, FALSE))) %>%
   group_by(rural) %>%
   summarise(pct_capital = 100 * mean(capital_bind), pct_members = 100 * mean(member_bind),
             pct_funding = 100 * mean(funding_bind), pct_reach = 100 * mean(reach_bind), .groups = "drop") %>%
@@ -365,8 +366,19 @@ print(binds_sens)                                                               
 ## credit unions in the same state and quarter (fixed effects), with the
 ## rural interaction so we can see whether the constraints work differently
 ## for rural institutions. Standard errors clustered by credit union.
+## IMPORTANT: capital_headroom = sustainable_growth - g_assets, so it contains
+## the outcome. Putting it on the right-hand side of a growth regression gives
+## a large negative coefficient by construction (an identity, not an effect).
+## The regression therefore uses capital capacity measured a YEAR EARLIER:
+## last year's sustainable growth rate and last year's net worth ratio.
+lagged <- d %>%
+  transmute(cu_number, qidx = qidx + 4L,                    # shift forward so year t-1 lines up with year t
+            sustainable_growth_lag = sustainable_growth,
+            networth_lag = networth_pct)
+d <- d %>% left_join(lagged, by = c("cu_number", "qidx"))
+
 reg_data <- d %>%
-  filter(!is.na(g_assets), !is.na(capital_headroom), !is.na(penetration), !is.na(loan_to_share),
+  filter(!is.na(g_assets), !is.na(sustainable_growth_lag), !is.na(networth_lag), !is.na(penetration), !is.na(loan_to_share),
          !is.na(pop2024), !is.na(density)) %>%
   mutate(state_quarter = paste(state_code, qidx),
          ln_assets  = log(assets_tot),
@@ -376,17 +388,17 @@ reg_data <- d %>%
          ln_competitors = log1p(n_cus_county))
 
 m_growth <- feols(
-  g_assets ~ capital_headroom + penetration + loan_to_share                      # capital, members, funding
+  g_assets ~ sustainable_growth_lag + networth_lag + penetration + loan_to_share   # capital (lagged), members, funding
              + county_pop_change_pct + ln_pop + ln_density + ln_offices + ln_competitors   # reach
              + ln_assets
-             + rural:capital_headroom + rural:penetration + rural:loan_to_share
+             + rural:sustainable_growth_lag + rural:networth_lag + rural:penetration + rural:loan_to_share
              + rural:county_pop_change_pct + rural:ln_pop + rural:ln_density + rural:ln_offices + rural:ln_competitors
              | state_quarter,
   data = reg_data, cluster = ~cu_number)
 print(summary(m_growth))                                                         ## LOOK
 ## How to read it: a NEGATIVE coefficient on penetration means more-saturated
 ## credit unions grow more slowly (demand binds). A POSITIVE coefficient on
-## capital_headroom means those with more room grow faster (capital binds).
+## sustainable_growth_lag means earnings capacity last year predicts growth this year (capital binds).
 ## A POSITIVE coefficient on ln_offices means a wider network buys growth
 ## even at the same size; a NEGATIVE one on ln_competitors means contested
 ## markets grow slower (this is rq1's mechanism result, seen from Q4's side).
@@ -395,7 +407,7 @@ print(summary(m_growth))                                                        
 ## Standardised version so the three can be compared on one scale: how much
 ## does one standard deviation of each constraint move growth?
 sd_table <- reg_data %>%
-  summarise(capital_headroom = sd(capital_headroom), penetration = sd(penetration),
+  summarise(sustainable_growth_lag = sd(sustainable_growth_lag), networth_lag = sd(networth_lag), penetration = sd(penetration),
             loan_to_share = sd(loan_to_share), county_pop_change_pct = sd(county_pop_change_pct, na.rm = TRUE),
             ln_pop = sd(ln_pop), ln_density = sd(ln_density), ln_offices = sd(ln_offices), ln_competitors = sd(ln_competitors)) %>%
   pivot_longer(everything(), names_to = "term", values_to = "sd")
@@ -449,8 +461,8 @@ if (exists("register_result")) {
 cat("\n=== SLIDE NUMBERS, Q4 ===\n")
 cat(sprintf("Capital: the typical rural credit union could grow %.1f points a year faster on its own earnings (non-rural %.1f). Only %.0f%% grow faster than their earnings allow.\n",
             cap$headroom[cap$rural == 1], cap$headroom[cap$rural == 0], cap$pct_above_sustainable[cap$rural == 1]))
-cat(sprintf("Members: median penetration %.0f%% rural vs %.0f%% non-rural; %.0f%% of rural credit unions are headquartered in a county that has lost population since 2010.\n",
-            100 * pen$penetration_median[pen$rural == 1], 100 * pen$penetration_median[pen$rural == 0], mkt$pct_in_shrinking_county[mkt$rural == 1]))
+cat(sprintf("Members: median penetration %.0f%% rural vs %.0f%% non-rural; %.0f%% of rural credit unions are headquartered in a county that has lost population since %s.\n",
+            100 * pen$penetration_median[pen$rural == 1], 100 * pen$penetration_median[pen$rural == 0], mkt$pct_in_shrinking_county[mkt$rural == 1], sub("pop", "", POP_BASE)))
 cat(sprintf("Reach: %.0f%% of rural credit unions have a single office; %.0f%% are the only credit union headquartered in their county; median county %s residents at %.0f per square mile.\n",
             reach$pct_single_office[reach$rural == 1], reach$pct_sole_cu_in_county[reach$rural == 1],
             format(reach$median_county_pop[reach$rural == 1], big.mark = ","), reach$median_density[reach$rural == 1]))
