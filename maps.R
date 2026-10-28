@@ -195,7 +195,8 @@ sv(p4, "map04_single_provider")
 ## Step 1 below tries to download it from R. If the proxy blocks that, it prints
 ## a web address: open it in Edge, press Ctrl+S, save it under exactly that name
 ## in CACHE_DIR, and re-run this block. After that the file is reused every time
-## and the API is never called again. No API key is needed for this one request.
+## and the API is never called again. The Census API now requires a key on every
+## request (browser too); it is read from CENSUS_API_KEY in .Renviron, never typed here.
 ACS_VARS <- c("B28002_001E", "B28002_004E",     # households; with broadband subscription
               "B01002_001E",                    # median age
               "B08201_001E", "B08201_002E",     # households; with no vehicle
@@ -203,6 +204,8 @@ ACS_VARS <- c("B28002_001E", "B28002_004E",     # households; with broadband sub
 ACS_FILE <- file.path(CACHE_DIR, "acs_county_2023.json")
 ACS_URL  <- sprintf("https://api.census.gov/data/2023/acs/acs5?get=NAME,%s&for=county:*",
                     paste(ACS_VARS, collapse = ","))
+if (!nzchar(Sys.getenv("CENSUS_API_KEY"))) stop("CENSUS_API_KEY is empty: put it in .Renviron and restart R")
+ACS_URL  <- paste0(ACS_URL, "&key=", Sys.getenv("CENSUS_API_KEY"))   # the printed address contains your key: do not share it
 
 ## a good file is real data: over 100 KB and starting with [[ -- not empty, not cut short, not a block page
 acs_file_ok <- function(f) file.exists(f) && file.size(f) > 1e5 && startsWith(readChar(f, 2L, useBytes = TRUE), "[[")
