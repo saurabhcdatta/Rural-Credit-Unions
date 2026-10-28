@@ -11,6 +11,11 @@
 #   * Albers via tigris::shift_geometry (AK/HI inset). NEVER pass crs= to coord_sf
 #     -- shift_geometry returns ESRI:102003 and re-projecting misplaces points.
 #   * Non-rural counties are always the same light grey. The story is rural.
+#   * Colour-blind safe: BLUE = served / has an office, ORANGE = gap / no office.
+#     Blue-orange is the one hue pair that stays distinct for every common
+#     colour-vision deficiency; within a hue, darker always means "more".
+#     Every colour is defined once, in the palette block below, and used by
+#     maps_distance.R and maps_density.R too. Never type a hex code in a map.
 #   * "No office" is a distinct fill, never the top or bottom bin of a ratio.
 #   * Ratios are suppressed below a population floor (POP_FLOOR) so a county of
 #     900 people cannot dominate a legend.
@@ -33,11 +38,41 @@ looks_like_html <- function(f) {
 }
 MAP_DIR <- file.path(OUT_DIR, "maps"); dir.create(MAP_DIR, recursive = TRUE, showWarnings = FALSE)
 stopifnot(exists("county"), exists("offices_q"), exists("cr"), exists("cu"))
+if (!exists("assert_universe")) source(file.path(if (exists("CODE_DIR")) CODE_DIR else ".", "universe.R"))
+assert_universe(cr, "maps.R")
+
 FROM_MASTER <- exists("ANCHORS")     # TRUE after rq_load.R; FALSE under the legacy shim
 
 ## ---- palette and helpers ----------------------------------------------------
-C_NONRURAL <- "#F4F4F1"; C_RURAL_BASE <- "#E3D9BF"; C_UNRATED <- "#CFCFCA"; C_STATE <- "#4A5A62"; C_CTY <- "#FFFFFF"
-C_NOOFFICE <- "#C8553D"; C_TEAL <- c("#DCE6E4", "#7FB0AE", "#1F6F78", "#0E4C55")
+## Colour-blind-safe palette (ColorBrewer Blues and Oranges, plus neutrals).
+## Checked by simulation for deuteranopia, protanopia and tritanopia: every pair
+## of categories on every map stays clearly distinguishable (see the palette
+## check sheet). BLUE = served, ORANGE = the gap, darker = more.
+## NO WHITE AND NO PALE SHADES AS CATEGORIES: the non-rural background is the only
+## light colour on any map. Every category starts at a mid tone, so nothing can be
+## mistaken for the background or for its neighbour.
+C_NONRURAL   <- "#F2F2F2"   # non-rural counties: light grey background, always
+C_RURAL_BASE <- "#D8C8A0"   # rural counties when only "rural" is shown: sand
+C_UNRATED    <- "#8C8C8C"   # not rated / no data: dark grey
+C_STATE      <- "#4A5A62"   # state outlines
+C_CTY        <- "#FFFFFF"   # county outlines
+C_NOOFFICE   <- "#D94801"   # no credit union office: the same strong orange on every map
+C_HASOFFICE  <- "#6BAED6"   # has an office, when that is the background: mid blue
+C_ONE        <- "#FDB863"   # exactly one provider: light orange (between none and two+)
+C_DOT        <- "#08306B"   # headquarters dots: navy
+BLUE3   <- c("#6BAED6", "#2171B5", "#08306B")                 # mid -> dark
+BLUE4   <- c("#9ECAE1", "#4292C6", "#08519C", "#081D58")
+ORANGE3 <- c("#FDAE6B", "#E6550D", "#7F2704")
+ORANGE4 <- c("#FDAE6B", "#F16913", "#C44103", "#6B2104")
+## distance bins: blue inside the Fed's 10-mile rural standard, orange beyond it
+DIST5   <- c("#08519C", "#6BAED6", "#FDAE6B", "#E6550D", "#7F2704")   # <5, 5-10, 10-20, 20-40, 40+
+DIST4   <- c("#4292C6", "#FDAE6B", "#E6550D", "#7F2704")              # <10, 10-20, 20-40, 40+
+SHARE5  <- c("#6BAED6", ORANGE4)                                      # <10%, 10-25, 25-50, 50-75, 75+
+## 3 x 3 bivariate (map 13): rows distance near -> far (orange), columns density sparse -> dense (blue)
+BIV9 <- c("near|sparse" = "#BDBDBD", "near|medium" = "#7FB2DA", "near|dense" = "#3A86CC",
+          "mid|sparse"  = "#F3A86B", "mid|medium"  = "#A59AA8", "mid|dense"  = "#7A7896",
+          "far|sparse"  = "#D9661F", "far|medium"  = "#9C5134", "far|dense"  = "#4A2540")
+C_TEAL <- BLUE4             # old name kept so older scripts still run; do not use in new code
 TH <- theme_void(base_size = 12) +
   theme(plot.title = element_text(face = "bold", size = 15, hjust = 0),
         plot.subtitle = element_text(size = 10.5, colour = "#5B6B72", hjust = 0),
@@ -94,7 +129,7 @@ base_layers <- function(fill_col) list(
 M$m1 <- fac(ifelse(M$rural24 == 1L, "Rural county", "Non-rural county"), c("Non-rural county", "Rural county"))
 p1 <- ggplot() + base_layers("m1") +
   scale_fill_manual(values = c("Rural county" = C_RURAL_BASE, "Non-rural county" = C_NONRURAL), name = NULL) +
-  geom_point(data = hq, aes(X, Y, size = assets_tot / 1e6), colour = C_TEAL[4], alpha = 0.75, shape = 16) +
+  geom_point(data = hq, aes(X, Y, size = assets_tot / 1e6), colour = C_DOT, alpha = 0.7, shape = 16) +
   scale_size_area(max_size = 7, breaks = c(10, 100, 500, 1000), labels = c("$10m", "$100m", "$500m", "$1bn"), name = "Assets") +
   labs(title = sprintf("%d rural credit unions, headquartered in %d of %d rural counties",
                        nrow(hq), uniqueN(hq$fips), K[rural24 == 1L, .N]),
@@ -113,10 +148,10 @@ K[, m2 := fac(m2, c("Non-rural", "No office", "Under 2,000 residents", "Under 2,
 M <- merge(cty_sf, K, by = "fips", all.x = TRUE)
 p2 <- ggplot() + base_layers("m2") +
   scale_fill_manual(values = c("Non-rural" = C_NONRURAL, "No office" = C_NOOFFICE, "Under 2,000 residents" = C_UNRATED,
-                               "Under 2,500 per office" = C_TEAL[4], "2,500-5,000" = C_TEAL[3], "5,000-10,000" = C_TEAL[2], "Over 10,000 per office" = C_TEAL[1]),
+                               "Under 2,500 per office" = BLUE4[4], "2,500-5,000" = BLUE4[3], "5,000-10,000" = BLUE4[2], "Over 10,000 per office" = BLUE4[1]),
                     name = "Residents per\ncredit union office", drop = FALSE) +
   labs(title = "How many rural residents each credit union office serves",
-       subtitle = "Rural counties only. Red = no office of any kind. Counties under 2,000 residents not rated.",
+       subtitle = "Rural counties only. Darker blue = more offices for the population. Orange = no office of any kind. Grey = under 2,000 residents, not rated.",
        caption = CAP("Population: Census county estimates, 2024.")) + TH + leg(2)
 sv(p2, "map02_residents_per_office")
 
@@ -127,11 +162,11 @@ K[, m3 := fac(m3, c("Non-rural", "Has an office", "Under 5,000", "5,000-15,000",
 M <- merge(cty_sf, K, by = "fips", all.x = TRUE)
 n_no <- K[rural24 == 1L & offices == 0L, .N]; pop_no <- K[rural24 == 1L & offices == 0L, sum(pop, na.rm = TRUE)]
 p3 <- ggplot() + base_layers("m3") +
-  scale_fill_manual(values = c("Non-rural" = C_NONRURAL, "Has an office" = "#DCE6E4",
-                               "Under 5,000" = "#F2D3CB", "5,000-15,000" = "#E5A48F", "15,000-30,000" = "#D4785B", "Over 30,000" = "#A63E27"),
+  scale_fill_manual(values = c("Non-rural" = C_NONRURAL, "Has an office" = C_HASOFFICE,
+                               "Under 5,000" = ORANGE4[1], "5,000-15,000" = ORANGE4[2], "15,000-30,000" = ORANGE4[3], "Over 30,000" = ORANGE4[4]),
                     name = "Residents in counties\nwith NO office", drop = FALSE) +
   labs(title = sprintf("%d rural counties have no credit union office \u2014 %.1f million people", n_no, pop_no / 1e6),
-       subtitle = "Darker = more people living in a county with nothing. Non-rural counties and covered rural counties in grey.",
+       subtitle = "Orange = rural county with no office; darker = more people living there. Blue = rural county with an office. Non-rural counties in light grey.",
        caption = CAP("Population: Census county estimates, 2024.")) + TH + leg(1)
 sv(p3, "map03_no_office_by_population")
 
@@ -145,7 +180,7 @@ single <- unique(single[, .(fips, cu_number)])
 single[cu[, .(cu_number, fips_last)], on = "cu_number", hq_fips := i.fips_last]
 single[, hq_elsewhere := hq_fips != fips]
 p4 <- ggplot() + base_layers("m4") +
-  scale_fill_manual(values = c("Non-rural" = C_NONRURAL, "No office" = C_UNRATED, "Exactly one credit union" = "#E8A24A", "Two or more" = C_TEAL[3]),
+  scale_fill_manual(values = c("Non-rural" = C_NONRURAL, "No office" = C_NOOFFICE, "Exactly one credit union" = C_ONE, "Two or more" = BLUE4[3]),
                     name = NULL, drop = FALSE) +
   labs(title = sprintf("%d rural counties are served by exactly one credit union", K[rural24 == 1L & cus == 1L, .N]),
        subtitle = sprintf("In %d of them the sole provider is headquartered in another county.\nOne merger away from none.",
@@ -210,7 +245,7 @@ biv <- function(var, lab, name, title, worse = "low", unit = "%", digits = 0, lo
   lv <- c("Non-rural", paste("Has an office", "\u00B7", lab3[ord]), paste("No office", "\u00B7", lab3[ord]))
   K[, cell := fac(cell, lv)]
   M <- merge(cty_sf, K, by = "fips", all.x = TRUE)
-  pal <- setNames(c(C_NONRURAL, "#DCE6E4", "#9FC3C1", "#5E9C99", "#F2D3CB", "#E08C72", "#A63E27"), lv)
+  pal <- setNames(c(C_NONRURAL, BLUE3, ORANGE3), lv)
   worst <- lv[7]
   n_worst <- K[cell == worst, .N]; pop_worst <- K[cell == worst, sum(pop, na.rm = TRUE)]
   p <- ggplot() + geom_sf(data = M, aes(fill = cell), colour = C_CTY, linewidth = 0.05) +
@@ -219,7 +254,7 @@ biv <- function(var, lab, name, title, worse = "low", unit = "%", digits = 0, lo
                       name = paste0("Credit union office  \u00B7  ", lab, "  (thirds are among rural counties only)")) +
     labs(title = sprintf(title, n_worst, pop_worst / 1e6),
          subtitle = paste0("Rural counties split into thirds by ", tolower(lab), ", crossed with whether any credit union office exists.\n",
-                           "Teal = has an office, red = none; darker = the worse third. Dark red is the worst of both."),
+                           "Blue = has an office, orange = none; darker = the worse third. Dark orange is the worst of both."),
          caption = CAP("Census ACS 2019\u20132023 five-year estimates.")) + TH + leg(2)
   sv(p, name); p
 }
@@ -292,8 +327,8 @@ K[, m9 := fifelse(rural24 == 0L, "Non-rural",
 K[, m9 := fac(m9, c("Non-rural", "Other rural, has office", "Other rural, no office", "Farming-dependent, has office", "Farming-dependent, no office"))]
 M <- merge(cty_sf, K, by = "fips", all.x = TRUE)
 p9 <- ggplot() + base_layers("m9") +
-  scale_fill_manual(values = c("Non-rural" = C_NONRURAL, "Farming-dependent, no office" = "#A63E27", "Farming-dependent, has office" = "#0E4C55",
-                               "Other rural, no office" = "#F2D3CB", "Other rural, has office" = "#DCE6E4"), name = NULL, drop = FALSE) +
+  scale_fill_manual(values = c("Non-rural" = C_NONRURAL, "Farming-dependent, no office" = C_NOOFFICE, "Farming-dependent, has office" = BLUE4[3],
+                               "Other rural, no office" = ORANGE4[1], "Other rural, has office" = C_HASOFFICE), name = NULL, drop = FALSE) +
   labs(title = sprintf("Of %d farming-dependent rural counties, %d have no credit union office",
                        K[rural24 == 1L & farming %in% TRUE, .N], K[rural24 == 1L & farming %in% TRUE & !has_office, .N]),
        subtitle = "USDA ERS county typology: farming accounts for a large share of county earnings or employment.",
@@ -311,9 +346,9 @@ caught <- cu[cu_number %in% cr[qidx == QZ, unique(cu_number)]][
   K[m10 == "Was rural, now not", .(fips)], on = .(fips_last = fips), nomatch = 0L]
 caught <- merge(caught[, .(cu_number, fips = fips_last)], cent_dt, by = "fips")
 p10 <- ggplot() + base_layers("m10") +
-  scale_fill_manual(values = c("Non-rural both" = C_NONRURAL, "Rural both" = C_RURAL_BASE, "Was rural, now not" = "#C8553D",
-                               "Became rural" = "#1F6F78", "No 2013 code" = "#FFFFFF"), name = NULL, drop = FALSE) +
-  geom_point(data = caught, aes(X, Y), colour = "#12202E", size = 1.6, shape = 21, fill = "#E8A24A") +
+  scale_fill_manual(values = c("Non-rural both" = C_NONRURAL, "Rural both" = C_RURAL_BASE, "Was rural, now not" = C_NOOFFICE,
+                               "Became rural" = BLUE4[3], "No 2013 code" = C_UNRATED), name = NULL, drop = FALSE) +
+  geom_point(data = caught, aes(X, Y), colour = "white", stroke = 0.4, size = 1.8, shape = 21, fill = C_DOT) +
   labs(title = sprintf("%d counties stopped being rural between the 2013 and 2024 classifications; %d became rural",
                        K[m10 == "Was rural, now not", .N], K[m10 == "Became rural", .N]),
        subtitle = sprintf("Dots: the %d credit unions headquartered in counties that lost rural status \u2014 rural in 2013 terms, not today.", nrow(caught)),

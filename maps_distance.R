@@ -26,6 +26,9 @@
 
 suppressPackageStartupMessages({ library(data.table); library(sf); library(ggplot2) })
 stopifnot(exists("sites"), exists("county"), exists("cty_sf"), exists("QZ"))
+if (!exists("assert_universe")) source(file.path(if (exists("CODE_DIR")) CODE_DIR else ".", "universe.R"))
+assert_universe(cr, "maps_distance.R")
+
 sf_use_s2(TRUE)
 ## Binary-safe check for a proxy block page masquerading as a download.
 ## Defined here too, so this script works whichever copy of dl() is loaded.
@@ -118,11 +121,11 @@ far_n <- K2[rural24 == 1L & miles_wmean > 20, .N]; far_pop <- K2[rural24 == 1L &
 p11 <- ggplot() +
   geom_sf(data = M11, aes(fill = m11), colour = C_CTY, linewidth = 0.05) +
   geom_sf(data = st_sf, fill = NA, colour = C_STATE, linewidth = 0.3) +
-  scale_fill_manual(values = c("Non-rural" = C_NONRURAL, "Under 5 miles" = "#DCE6E4", "5-10 miles" = "#9FC3C1",
-                               "10-20 miles" = "#E8A24A", "20-40 miles" = "#C8553D", "Over 40 miles" = "#7A2A1A"),
-                    name = "Average distance from a resident to the nearest credit union office", drop = FALSE, na.value = "#FFFFFF", na.translate = FALSE) +
+  scale_fill_manual(values = c("Non-rural" = C_NONRURAL, "Under 5 miles" = DIST5[1], "5-10 miles" = DIST5[2],
+                               "10-20 miles" = DIST5[3], "20-40 miles" = DIST5[4], "Over 40 miles" = DIST5[5]),
+                    name = "Average distance from a resident to the nearest credit union office", drop = FALSE, na.value = C_UNRATED, na.translate = FALSE) +
   labs(title = sprintf("In %d rural counties the average resident is more than 20 miles from a credit union office\n\u2014 %.1f million people", far_n, far_pop / 1e6),
-       subtitle = "Population-weighted average, from census-tract population centres to the nearest office, straight-line miles. Rural counties only.",
+       subtitle = "Population-weighted average, from census-tract population centres to the nearest office, straight-line miles. Rural counties only.\nBlue = within the 10-mile rural standard; orange = beyond it, darker = farther.",
        caption = CAP("Office locations: ZIP-code centroids (Census gazetteer 2023). Population: Census 2020 tract centroids.")) + TH + leg(1)
 sv(p11, "map11_distance_to_nearest_office")
 
@@ -137,9 +140,9 @@ des_pop <- cd[rural24 == 1L, sum(pop * share_over_10)]
 p12 <- ggplot() +
   geom_sf(data = M12, aes(fill = m12), colour = C_CTY, linewidth = 0.05) +
   geom_sf(data = st_sf, fill = NA, colour = C_STATE, linewidth = 0.3) +
-  scale_fill_manual(values = c("Non-rural" = C_NONRURAL, "Under 10%" = "#DCE6E4", "10-25%" = "#9FC3C1",
-                               "25-50%" = "#E8A24A", "50-75%" = "#C8553D", "Over 75%" = "#7A2A1A"),
-                    name = "Share of residents more than 10 miles from a credit union office", drop = FALSE, na.value = "#FFFFFF", na.translate = FALSE) +
+  scale_fill_manual(values = c("Non-rural" = C_NONRURAL, "Under 10%" = SHARE5[1], "10-25%" = SHARE5[2],
+                               "25-50%" = SHARE5[3], "50-75%" = SHARE5[4], "Over 75%" = SHARE5[5]),
+                    name = "Share of residents more than 10 miles from a credit union office", drop = FALSE, na.value = C_UNRATED, na.translate = FALSE) +
   labs(title = sprintf("%.1f million rural residents live more than 10 miles from a credit union office \u2014 the Federal Reserve's rural \u201Cdesert\u201D threshold", des_pop / 1e6),
        subtitle = sprintf("In %d rural counties, more than half of residents are beyond 10 miles. Same 10-mile rural standard as the interagency banking-desert work.\nCredit union offices only \u2014 bank branches are not counted here, so this is not a banking-desert map.", des_n),
        caption = CAP("Office locations: ZIP-code centroids (Census gazetteer 2023). Population: Census 2020 tract centroids. Threshold: 10 miles straight-line for rural tracts, per FedCommunities Banking Deserts methodology.")) + TH + leg(1)

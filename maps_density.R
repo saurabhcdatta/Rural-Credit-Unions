@@ -19,6 +19,9 @@
 suppressPackageStartupMessages({ library(data.table); library(sf); library(ggplot2) })
 stopifnot(exists("cd"), exists("K2"), exists("cty_sf"), exists("cenco"))
 
+if (!exists("assert_universe")) source(file.path(if (exists("CODE_DIR")) CODE_DIR else ".", "universe.R"))
+assert_universe(cr, "maps_density.R")
+
 ## ---- E1  density: residents per square mile from the county geometry --------
 area <- data.table(fips = cty_sf$fips, sqmi = as.numeric(cty_sf$ALAND) / 2589988.11)
 area[fips %in% c("02063", "02066"), fips := "02261"]
@@ -38,10 +41,9 @@ lab_n <- c(sparse = sprintf("sparse (under %.0f/sq mi)", qn[1]), medium = sprint
 D[, cell := paste(lab_d[dist3], "\u00B7", lab_n[dens3])]
 
 ## 3 x 3 bivariate palette: rows = distance (near -> far), columns = density (sparse -> dense).
-## Blue-ish grows with density, red-ish with distance; the far+dense corner is darkest.
-biv9 <- c("near|sparse" = "#E8E8E8", "near|medium" = "#B5C0DA", "near|dense" = "#6C83B5",
-          "mid|sparse"  = "#E4C9B3", "mid|medium"  = "#B39A9E", "mid|dense"  = "#6B6F8E",
-          "far|sparse"  = "#D9A28A", "far|medium"  = "#B1777A", "far|dense"  = "#6E3A5E")
+## Blue grows with density, orange with distance; the far+dense corner is darkest.
+## Colours come from BIV9 in maps.R (colour-blind safe).
+biv9 <- BIV9
 lv <- as.vector(t(outer(c("near","mid","far"), c("sparse","medium","dense"), paste, sep = "|")))
 D[, key := paste(dist3, dens3, sep = "|")]
 pal <- setNames(biv9[lv], paste(lab_d[sub("\\|.*", "", lv)], "\u00B7", lab_n[sub(".*\\|", "", lv)]))
@@ -59,7 +61,7 @@ p13 <- ggplot() +
   scale_fill_manual(values = pal, breaks = names(pal), drop = FALSE, na.value = C_NONRURAL,
                     name = "Distance to nearest credit union office  \u00B7  Residents per square mile   (thirds among rural counties)") +
   labs(title = sprintf("%d rural counties are both far from a credit union office and comparatively densely settled\n\u2014 %.1f million people in the corner that is not explained by emptiness", nrow(fd), fd[, sum(pop)] / 1e6),
-       subtitle = "Read across for density, down for distance.\nTan = expected: few people, far from an office. Dark purple = the policy problem: many people, far from an office. Blue = settled rural counties with an office nearby.",
+       subtitle = "Read across for density, down for distance.\nOrange = expected: few people, far from an office. Grey = near an office but sparsely settled. Darkest (plum) = the policy problem: many people, far from an office. Blue = settled rural counties with an office nearby.",
        caption = CAP("Distance from Census 2020 tract population centres to ZIP-centroid office locations. Density from Census county land area and 2024 population.")) + TH + leg(3)
 sv(p13, "map13_distance_x_density")
 fwrite(fd[order(-pop), .(fips, pop, miles_wmean = round(miles_wmean, 1), density = round(density, 1), share_over_10 = round(100 * share_over_10, 1))],
@@ -78,12 +80,12 @@ base14 <- merge(cty_sf, county[is_state_or_dc == TRUE, .(fips, rural24)], by = "
 base14$base <- ifelse(base14$rural24 == 1L, "Rural county", "Non-rural county")
 p14 <- ggplot() +
   geom_sf(data = base14[base14$base == "Non-rural county", ], fill = C_NONRURAL, colour = C_CTY, linewidth = 0.05) +
-  geom_sf(data = base14[base14$base == "Rural county", ],     fill = "#F1EEE4",  colour = C_CTY, linewidth = 0.05) +
+  geom_sf(data = base14[base14$base == "Rural county", ],     fill = C_RURAL_BASE, colour = C_CTY, linewidth = 0.05) +
   geom_sf(data = st_sf, fill = NA, colour = C_STATE, linewidth = 0.3) +
   geom_point(data = S_dt[order(-beyond10)], aes(X, Y, size = beyond10, fill = dist_bin), colour = "white", stroke = 0.25, alpha = 0.65, shape = 21) +
   scale_size_area(max_size = 7, breaks = c(5000, 20000, 50000, 100000), labels = c("5,000", "20,000", "50,000", "100,000"),
                   name = "Residents more than 10 miles from an office") +
-  scale_fill_manual(values = c("Under 10 miles" = "#7FB0AE", "10-20 miles" = "#E8A24A", "20-40 miles" = "#C8553D", "Over 40 miles" = "#7A2A1A"),
+  scale_fill_manual(values = c("Under 10 miles" = DIST4[1], "10-20 miles" = DIST4[2], "20-40 miles" = DIST4[3], "Over 40 miles" = DIST4[4]),
                     name = "Average distance in the county") +
   labs(title = sprintf("Where the %.1f million rural residents beyond 10 miles actually live", S_dt[, sum(beyond10)] / 1e6),
        subtitle = "One circle per rural county at its population centre, sized by residents more than 10 miles from any credit union office.\nDrawn so people, not acres, carry the visual weight. Same 11.6 million as map 12.",
