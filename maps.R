@@ -204,11 +204,18 @@ ACS_FILE <- file.path(CACHE_DIR, "acs_county_2023.json")
 ACS_URL  <- sprintf("https://api.census.gov/data/2023/acs/acs5?get=NAME,%s&for=county:*",
                     paste(ACS_VARS, collapse = ","))
 
+## a good file is real data: over 100 KB and starting with [[ -- not empty, not cut short, not a block page
+acs_file_ok <- function(f) file.exists(f) && file.size(f) > 1e5 && startsWith(readChar(f, 2L, useBytes = TRUE), "[[")
+if (file.exists(ACS_FILE) && !acs_file_ok(ACS_FILE)) {
+  cat("Removing a bad ACS file (", file.size(ACS_FILE), "bytes ) -- it is empty, cut short or a block page\n")
+  file.remove(ACS_FILE)
+}
+
 ## step 1: get the file if it is not already there
 if (!file.exists(ACS_FILE)) {
   ok <- tryCatch({ download.file(ACS_URL, ACS_FILE, method = "curl", quiet = TRUE); TRUE },
                  error = function(e) FALSE)
-  if (!ok || !file.exists(ACS_FILE) || looks_like_html(ACS_FILE)) {
+  if (!ok || !acs_file_ok(ACS_FILE)) {
     if (file.exists(ACS_FILE)) file.remove(ACS_FILE)
     cat("\n*** The proxy blocked the Census download from R. Do this once: ***\n",
         "1. Open this address in Edge:\n   ", ACS_URL, "\n",
@@ -217,7 +224,7 @@ if (!file.exists(ACS_FILE)) {
   }
 }
 ## step 2: read it (skip maps 5-8 if it is still missing or is a block page)
-ACS_OK <- file.exists(ACS_FILE) && !looks_like_html(ACS_FILE)
+ACS_OK <- acs_file_ok(ACS_FILE)
 if (ACS_OK) {
   j <- jsonlite::fromJSON(ACS_FILE)
   acs <- as.data.table(j[-1, , drop = FALSE]); setnames(acs, j[1, ])
