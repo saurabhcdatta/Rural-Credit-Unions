@@ -188,43 +188,46 @@ p4 <- ggplot() + base_layers("m4") +
        caption = CAP()) + TH + leg(1)
 sv(p4, "map04_single_provider")
 
-## ---- Census ACS pull (one call per variable, county level) ------------------
-## Uses your key from the environment. If the API is blocked behind the proxy,
-## download the same tables from data.census.gov as CSV and read them here.
-acs_get <- function(vars, year = 2023, survey = "acs5") {
-  key <- Sys.getenv("CENSUS_API_KEY"); if (!nzchar(key)) stop("Set CENSUS_API_KEY")
-  url <- sprintf("https://api.census.gov/data/%d/acs/%s?get=NAME,%s&for=county:*&key=%s",
-                 year, survey, paste(vars, collapse = ","), key)
-  j <- jsonlite::fromJSON(url)
-  d <- as.data.table(j[-1, ]); setnames(d, j[1, ])
-  d[, fips := paste0(state, county)]
-  for (v in vars) d[, (v) := as.numeric(get(v))]
-  d[, c("fips", vars), with = FALSE]
+## ---- Census ACS pull: one JSON file, saved once ---------------------------
+## The NCUA proxy blocks R from reaching api.census.gov (R gets an HTML block
+## page back). A browser usually gets through. So the data come from ONE file:
+##     CACHE_DIR/acs_county_2023.json
+## Step 1 below tries to download it from R. If the proxy blocks that, it prints
+## a web address: open it in Edge, press Ctrl+S, save it under exactly that name
+## in CACHE_DIR, and re-run this block. After that the file is reused every time
+## and the API is never called again. No API key is needed for this one request.
+ACS_VARS <- c("B28002_001E", "B28002_004E",     # households; with broadband subscription
+              "B01002_001E",                    # median age
+              "B08201_001E", "B08201_002E",     # households; with no vehicle
+              "B17001_001E", "B17001_002E")     # poverty universe; below poverty
+ACS_FILE <- file.path(CACHE_DIR, "acs_county_2023.json")
+ACS_URL  <- sprintf("https://api.census.gov/data/2023/acs/acs5?get=NAME,%s&for=county:*",
+                    paste(ACS_VARS, collapse = ","))
+
+## step 1: get the file if it is not already there
+if (!file.exists(ACS_FILE)) {
+  ok <- tryCatch({ download.file(ACS_URL, ACS_FILE, method = "curl", quiet = TRUE); TRUE },
+                 error = function(e) FALSE)
+  if (!ok || !file.exists(ACS_FILE) || looks_like_html(ACS_FILE)) {
+    if (file.exists(ACS_FILE)) file.remove(ACS_FILE)
+    cat("\n*** The proxy blocked the Census download from R. Do this once: ***\n",
+        "1. Open this address in Edge:\n   ", ACS_URL, "\n",
+        "2. Press Ctrl+S and save it as:\n   ", ACS_FILE, "\n",
+        "3. Re-run this block. Until then maps 5-8 are skipped; maps 9 and 10 still run.\n\n")
+  }
 }
-## FALLBACK: if the API is blocked, download each table from data.census.gov as
-## CSV into CACHE_DIR (files named e.g. ACSDT5Y2023.B28002-Data.csv) and this
-## reader takes over automatically.
-acs_csv <- function(table) {
-  f <- list.files(CACHE_DIR, paste0("ACSDT5Y2023\\.", table, "-Data\\.csv$"), full.names = TRUE)[1]
-  if (is.na(f)) return(NULL)
-  d <- fread(f, skip = 1, colClasses = "character", showProgress = FALSE)
-  setnames(d, tolower(gsub("[^A-Za-z0-9]+", "_", names(d))))
-  d[, fips := sub("^.*US", "", geography)]
-  d
+## step 2: read it (skip maps 5-8 if it is still missing or is a block page)
+ACS_OK <- file.exists(ACS_FILE) && !looks_like_html(ACS_FILE)
+if (ACS_OK) {
+  j <- jsonlite::fromJSON(ACS_FILE)
+  acs <- as.data.table(j[-1, , drop = FALSE]); setnames(acs, j[1, ])
+  acs[, fips := paste0(state, county)]
+  for (v in ACS_VARS) acs[, (v) := as.numeric(get(v))]
+  cat("ACS counties read:", nrow(acs), "(expect about 3,220)\n")                 ## LOOK
+  acs[, `:=`(broadband_pct  = 100 * B28002_004E / B28002_001E, median_age = B01002_001E,
+             no_vehicle_pct = 100 * B08201_002E / B08201_001E, poverty_pct = 100 * B17001_002E / B17001_001E)]
+  K <- merge(K, acs[, .(fips, broadband_pct, median_age, no_vehicle_pct, poverty_pct)], by = "fips", all.x = TRUE)
 }
-acs_get_any <- function(vars) {
-  key <- Sys.getenv("CENSUS_API_KEY")
-  if (nzchar(key)) return(tryCatch(acs_get(vars), error = function(e) { message("API failed: ", conditionMessage(e), " -- trying CSVs"); NULL }))
-  NULL
-}
-acs <- acs_get_any(c("B28002_001E", "B28002_004E",        # households; with broadband subscription
-                 "B01002_001E",                       # median age
-                 "B08201_001E", "B08201_002E",        # households; with no vehicle
-                 "B17001_001E", "B17001_002E"))       # poverty universe; below poverty
-if (is.null(acs)) stop("No ACS data: set CENSUS_API_KEY, or place the four data.census.gov CSVs (B28002, B01002, B08201, B17001) in CACHE_DIR and adapt acs_csv().")
-acs[, `:=`(broadband_pct = 100 * B28002_004E / B28002_001E, median_age = B01002_001E,
-           no_vehicle_pct = 100 * B08201_002E / B08201_001E, poverty_pct = 100 * B17001_002E / B17001_001E)]
-K <- merge(K, acs[, .(fips, broadband_pct, median_age, no_vehicle_pct, poverty_pct)], by = "fips", all.x = TRUE)
 
 ## bivariate helper: a Census measure split into thirds among RURAL counties,
 ## crossed with office presence. Legend labels name the third and its cut point.
@@ -259,6 +262,7 @@ biv <- function(var, lab, name, title, worse = "low", unit = "%", digits = 0, lo
   sv(p, name); p
 }
 
+if (ACS_OK) {   # maps 5-8 need the ACS file; skipped (not stopped) without it
 ## ---- MAP 5  broadband x offices ---------------------------------------------
 p5 <- biv("broadband_pct", "Broadband subscription", "map05_broadband_x_office",
           "%d rural counties have no credit union office AND the lowest broadband\n\u2014 %.1f million people for whom online banking is not the answer",
@@ -278,6 +282,7 @@ p7 <- biv("no_vehicle_pct", "Households without a vehicle", "map07_no_vehicle_x_
 p8 <- biv("poverty_pct", "Poverty rate", "map08_poverty_x_office",
           "%d rural counties have no office AND the highest poverty\n\u2014 %.1f million people",
           worse = "high", unit = "%", lo_word = "lowest", hi_word = "highest")
+} else cat("Maps 5-8 skipped: ACS file not found. See the message above.\n")
 
 ## ---- MAP 9  farming-dependent counties and credit union presence ------------
 ## USDA ERS County Typology Codes (2015 edition, farming_2015_update flag).
