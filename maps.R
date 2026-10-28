@@ -117,9 +117,24 @@ if (FROM_MASTER) {
 } else cat("NOTE: running from the legacy shim. Titles are NOT guaranteed to match the deck. Rebuild from the master before publishing.\n")
 
 ## rural HQ points (from cr, latest quarter), placed at county centroids
-hq <- cr[qidx == QZ & rural == 1L, .(cu_number, fips, assets_tot)]
+hq_all <- cr[qidx == QZ & rural == 1L, .(cu_number, fips, assets_tot)]      # every rural CU in the study
 cent <- st_centroid(st_geometry(cty_sf)); cent_dt <- data.table(fips = cty_sf$fips, st_coordinates(cent))
-hq <- merge(hq, cent_dt, by = "fips")
+hq <- merge(hq_all, cent_dt, by = "fips")                                    # the ones the county map can draw
+
+## Rural credit unions in the territories (Guam, US Virgin Islands, ...) are in
+## the study but the county map has no shapes for them. Count them, name them in
+## the title, and STOP if anything else fails to map -- no silent drops.
+terr <- hq_all[!fips %in% cent_dt$fips]
+if (any(as.integer(substr(terr$fips, 1, 2)) <= 56L))
+  stop("Rural CUs in a state county failed to map: ", paste(terr[as.integer(substr(fips, 1, 2)) <= 56L, fips], collapse = ", "))
+stopifnot(nrow(hq) + nrow(terr) == nrow(hq_all))                             # map + territories = study total
+TERR_NAMES <- c("60" = "American Samoa", "66" = "Guam", "69" = "the Northern Mariana Islands",
+                "72" = "Puerto Rico", "78" = "the US Virgin Islands")
+terr_names <- unname(TERR_NAMES[sort(unique(substr(terr$fips, 1, 2)), decreasing = TRUE)])
+terr_txt <- if (nrow(terr) == 0) "" else
+  sprintf(",\nplus %d in %s (not shown)", nrow(terr),
+          if (length(terr_names) == 1) terr_names else paste(paste(head(terr_names, -1), collapse = ", "), "and", tail(terr_names, 1)))
+cat(sprintf("Rural CUs: %d in the study = %d on the map + %d in territories\n", nrow(hq_all), nrow(hq), nrow(terr)))   ## LOOK
 
 base_layers <- function(fill_col) list(
   geom_sf(data = M, aes(fill = .data[[fill_col]]), colour = C_CTY, linewidth = 0.05),
@@ -131,10 +146,10 @@ p1 <- ggplot() + base_layers("m1") +
   scale_fill_manual(values = c("Rural county" = C_RURAL_BASE, "Non-rural county" = C_NONRURAL), name = NULL) +
   geom_point(data = hq, aes(X, Y, size = assets_tot / 1e6), colour = C_DOT, alpha = 0.7, shape = 16) +
   scale_size_area(max_size = 7, breaks = c(10, 100, 500, 1000), labels = c("$10m", "$100m", "$500m", "$1bn"), name = "Assets") +
-  labs(title = sprintf("%d rural credit unions, headquartered in %d of %d rural counties",
-                       nrow(hq), uniqueN(hq$fips), K[rural24 == 1L, .N]),
+  labs(title = sprintf("%d rural credit unions: %d in the states, headquartered in %d of %s rural counties%s",
+                       nrow(hq_all), nrow(hq), uniqueN(hq$fips), format(K[rural24 == 1L, .N], big.mark = ","), terr_txt),
        subtitle = "One dot per rural credit union headquarters, sized by assets. Rural counties shaded.",
-       caption = CAP()) + TH + leg(1)
+       caption = CAP("Rural county count covers the 50 states and DC; territory credit unions are rural under the same USDA-ERS codes.")) + TH + leg(1)
 sv(p1, "map01_rural_cu_distribution")
 
 ## ---- MAP 2  rural residents per office --------------------------------------
