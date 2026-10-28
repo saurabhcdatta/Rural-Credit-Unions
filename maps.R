@@ -146,8 +146,11 @@ p1 <- ggplot() + base_layers("m1") +
   scale_fill_manual(values = c("Rural county" = C_RURAL_BASE, "Non-rural county" = C_NONRURAL), name = NULL) +
   geom_point(data = hq, aes(X, Y, size = assets_tot / 1e6), colour = C_DOT, alpha = 0.7, shape = 16) +
   scale_size_area(max_size = 7, breaks = c(10, 100, 500, 1000), labels = c("$10m", "$100m", "$500m", "$1bn"), name = "Assets") +
-  labs(title = sprintf("%d rural credit unions: %d in the states, headquartered in %d of %s rural counties%s",
-                       nrow(hq_all), nrow(hq), uniqueN(hq$fips), format(K[rural24 == 1L, .N], big.mark = ","), terr_txt),
+  labs(title = paste0(
+         sprintf("%d rural credit unions: %d in the states, headquartered in %d of %s rural counties",
+                 nrow(hq_all), nrow(hq), uniqueN(hq$fips), format(K[rural24 == 1L, .N], big.mark = ",")),
+         if (nrow(terr) > 0) sprintf(",\nplus %d in %s (not shown)", nrow(terr),       # \n = second line
+                                     paste(rev(unname(TERR_NAMES[sort(unique(substr(terr$fips, 1, 2)))])), collapse = " and ")) else ""),
        subtitle = "One dot per rural credit union headquarters, sized by assets. Rural counties shaded.",
        caption = CAP("Rural county count covers the 50 states and DC; territory credit unions are rural under the same USDA-ERS codes.")) + TH + leg(1)
 sv(p1, "map01_rural_cu_distribution")
