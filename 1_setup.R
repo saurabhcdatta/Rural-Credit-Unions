@@ -46,6 +46,7 @@ if (.Platform$OS.type == "windows") options(download.file.method = "wininet")
 ##   3 noncore adj large metro, 4 small metro, 5 micro adj small metro,
 ##   6 noncore adj small metro, 7 micro NOT adj metro, 8/9 noncore nonadjacent
 RURAL_2024 <- c(3, 6, 7, 8, 9)
+METRO_2024 <- c(1, 4)        # ERS 2024 UIC: 1 = large metro, 4 = small metro. Code 2 is MICROPOLITAN, not metro.
 
 ## 2013 UIC (12 categories): 1-2 metro, 3/5 micro adj metro, 8 micro nonadj,
 ##   4/6/7/9/10/11/12 noncore

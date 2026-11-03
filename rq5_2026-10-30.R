@@ -15,7 +15,7 @@
 #   D0  baseline       HQ county rural, 2024 codes                    (the study)
 #   D1  vintage 2013   HQ county rural, 2013 codes                    (older map)
 #   D2  remote only    HQ county rural AND not next to any metro      (stricter)
-#   D3  nonmetro       HQ county outside any metro area (UIC >= 3)    (wider; USDA's usual)
+#   D3  nonmetro       HQ county outside any metro area (UIC not 1 or 4) (wider; USDA's usual)
 #   D4  offices S2     most of the credit union's offices are rural   (service area)
 #   D5  offices any    at least one office is rural                   (widest service area)
 #   D6  lower 48       baseline, dropping Alaska, Hawaii, territories (sample check)
@@ -53,6 +53,7 @@ QZ <- max(cr$qidx)
 cat("Latest quarter:", q_lab(QZ), "\n")
 ## the 2024 rural codes come from setup (one definition, one place); stop if missing
 stopifnot("RURAL_2024 not defined -- run the setup script first" = exists("RURAL_2024"))
+if (!exists("METRO_2024")) METRO_2024 <- c(1L, 4L)   # ERS 2024 UIC: 1 large metro, 4 small metro (code 2 is micropolitan)
 
 ## the same controls as RQ1, so the baseline row reproduces the RQ1 number
 CTRL <- "ln_assets + I(ln_assets^2) + age_q + lid + mdi + fed + cecl_flag"
@@ -85,7 +86,7 @@ d <- d %>%
   mutate(def_2024_hq   = rural,
          def_2013_hq   = rural13,
          def_remote    = as.integer(rural == 1L & adj_class %in% c("remote micropolitan", "remote")),
-         def_nonmetro  = ifelse(is.na(uic24), NA_integer_, as.integer(uic24 >= 3)))
+         def_nonmetro  = ifelse(is.na(uic24), NA_integer_, as.integer(!uic24 %in% METRO_2024)))
 
 ## D4 and D5 from the office file: share of each credit union's offices that sit
 ## in rural counties (2024 codes), every quarter. Offices start in 2010Q3.

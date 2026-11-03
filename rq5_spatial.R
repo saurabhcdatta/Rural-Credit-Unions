@@ -10,7 +10,11 @@
 #   same underlying scale of remoteness. This script estimates the advantage
 #   ALONG that scale instead of at one cut-off:
 #     S2  by USDA-ERS Urban Influence Code (the nine 2024 codes), each against
-#         large-metro credit unions -- a step-by-step gradient
+#         large-metro credit unions -- a step-by-step gradient.
+#         2024 codes: 1 large metro, 2 micropolitan next to a large metro, 3 noncore
+#         next to a large metro, 4 SMALL METRO, 5 micropolitan next to a small metro,
+#         6 noncore next to a small metro, 7 micropolitan not next to a metro,
+#         8-9 noncore not next to a metro.
 #     S3  by straight-line distance from the county to the nearest metro area,
 #         in bands -- a continuous gradient that ignores the codes altogether
 #     S4  the RQ1 headline re-estimated with Conley standard errors, which
@@ -47,6 +51,7 @@ OUT5S <- file.path(OUT_DIR, "rq5")
 dir.create(OUT5S, recursive = TRUE, showWarnings = FALSE)
 if (!exists("q_lab")) q_lab <- function(q) sprintf("%dQ%d", (q - 1L) %/% 4L, ((q - 1L) %% 4L) + 1L)
 QZ <- max(cr$qidx)
+if (!exists("METRO_2024")) METRO_2024 <- c(1L, 4L)   # ERS 2024 UIC: 1 large metro, 4 small metro (code 2 is micropolitan)
 CTRL <- "ln_assets + I(ln_assets^2) + age_q + lid + mdi + fed + cecl_flag"     # as RQ1
 
 ## ---- S1  county geography: centre point and distance to the nearest metro ----------
@@ -63,7 +68,7 @@ shapes <- shapes[as.integer(substr(shapes$fips, 1, 2)) <= 56, ]                 
 
 ## the nearest metro area: union of every metro county (UIC 1-2), measured from
 ## each county's centre to the metro EDGE. Metro counties themselves = 0.
-metro_fips <- county %>% as_tibble() %>% filter(uic24 %in% c(1, 2)) %>% pull(fips)
+metro_fips <- county %>% as_tibble() %>% filter(uic24 %in% METRO_2024) %>% pull(fips)
 metro_area <- shapes %>% filter(fips %in% metro_fips) %>% st_union()
 centres    <- st_point_on_surface(shapes)                                        # inside the county, even for odd shapes
 geo <- tibble(fips = shapes$fips,
@@ -97,12 +102,16 @@ cat(sprintf("Baseline: growth %+.3f, ROA %+.3f\n", coef(m_base_g)["rural"], coef
 ## One coefficient per code, each against large-metro credit unions (code 1).
 ## The label says what each code is in this study: metro, non-metro but not rural
 ## under the statute, rural next to a metro, or remote -- taken from the data.
-uic_class <- county %>% as_tibble() %>% distinct(uic24, rural24, adj_class) %>% filter(!is.na(uic24)) %>%
-  group_by(uic24) %>% summarise(rural24 = max(rural24), adj_class = first(adj_class[!is.na(adj_class)], default = NA_character_), .groups = "drop") %>%
-  mutate(class = case_when(uic24 %in% c(1, 2)                          ~ "metro",
-                           rural24 == 0                                ~ "non-metro, not rural",
-                           adj_class %in% c("remote micropolitan", "remote") ~ "rural, remote",
-                           TRUE                                        ~ "rural, next to a metro"))
+uic_class <- county %>% as_tibble() %>%
+  filter(!is.na(uic24)) %>%
+  group_by(uic24) %>%
+  summarise(rural24 = max(rural24),
+            remote  = any(adj_class %in% c("remote micropolitan", "remote")),
+            .groups = "drop") %>%
+  mutate(class = case_when(uic24 %in% METRO_2024 ~ "metro",
+                           rural24 == 0       ~ "non-metro, not rural",
+                           remote             ~ "rural, remote",
+                           TRUE               ~ "rural, next to a metro"))
 print(uic_class)                                                                  ## LOOK -- confirm which codes are which
 
 ## (rows without a 2024 code -- Connecticut's pre-2022 counties, territories -- drop from this model only)

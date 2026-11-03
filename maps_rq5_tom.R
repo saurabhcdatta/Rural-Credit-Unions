@@ -32,6 +32,7 @@ stopifnot("run maps.R through MAP 1 first" = exists("cty_sf") && exists("cent_dt
           "PANEL_FILE not set -- run the setup script" = exists("PANEL_FILE"),
           "RURAL_2024 not set -- run the setup script" = exists("RURAL_2024"))
 QZ <- max(cr$qidx)
+if (!exists("METRO_2024")) METRO_2024 <- c(1L, 4L)   # ERS 2024 UIC: 1 large metro, 4 small metro (code 2 is micropolitan)
 if (!exists("q_lab")) q_lab <- function(q) sprintf("%dQ%d", (q - 1L) %/% 4L, ((q - 1L) %% 4L) + 1L)
 
 ## ---- T1  MAP 15: what counts as rural, as rings -----------------------------------
@@ -47,7 +48,7 @@ K15 <- county %>%
   mutate(ring = case_when(
     rural24 == 1L & adj_class %in% c("remote micropolitan", "remote") ~ "Rural under every definition (remote)",
     rural24 == 1L                                                     ~ "Rural under the statute, next to a metro",
-    uic24 >= 3                                                        ~ "Outside a metro, but not rural under the statute",
+    !uic24 %in% METRO_2024                                            ~ "Outside a metro, but not rural under the statute",
     TRUE                                                              ~ "Metro county"),
     ring = fac(ring, names(RING_COLS))) %>%
   select(fips, ring)
@@ -61,7 +62,7 @@ cu_ring <- cr %>%
   left_join(county %>% as_tibble() %>% select(fips, uic24, adj_class), by = "fips")
 n_statute  <- sum(cu_ring$rural == 1L)
 n_remote   <- sum(cu_ring$rural == 1L & cu_ring$adj_class %in% c("remote micropolitan", "remote"))
-n_nonmetro <- sum(cu_ring$uic24 >= 3, na.rm = TRUE)
+n_nonmetro <- sum(!is.na(cu_ring$uic24) & !cu_ring$uic24 %in% METRO_2024)
 cat(sprintf("Rural credit unions: statute %d | remote only %d | every non-metro county %d\n",
             n_statute, n_remote, n_nonmetro))                                    ## LOOK -- expect 463 | 347 | 2266
 
@@ -246,16 +247,16 @@ n_terr16 <- n_statute - nrow(hq16)
 fam_n <- hq16 %>% count(family)
 fam_lab <- setNames(sprintf("%s (%d)", fam_n$family, fam_n$n), fam_n$family)
 p16 <- ggplot() +
-  geom_sf(data = M15, aes(fill = ring), colour = C_CTY, linewidth = 0.05, alpha = 0.55, show.legend = FALSE) +
+  geom_sf(data = M15, aes(fill = ring), colour = C_CTY, linewidth = 0.05, alpha = 0.30, show.legend = FALSE) +
   geom_sf(data = st_sf, fill = NA, colour = C_STATE, linewidth = 0.3) +
   scale_fill_manual(values = RING_COLS, na.value = C_NONRURAL) +
   geom_point(data = hq16 %>% arrange(desc(assets_tot)), aes(X, Y, colour = family, size = assets_tot / 1e6), alpha = 0.85) +
   scale_colour_manual(values = FAM_COLS, labels = fam_lab, name = "Membership type") +
-  scale_size_area(max_size = 6, breaks = c(10, 100, 500), labels = c("$10m", "$100m", "$500m"), name = "Assets") +
-  labs(title = sprintf("Who serves rural America: %d rural credit unions by membership type",
-                       nrow(hq16)),
-       subtitle = sprintf("One dot per headquarters, coloured by field-of-membership type, on the rural rings of map 15. State charters report no type (grey).%s",
-                          if (n_terr16 > 0) sprintf(" Plus %d in the territories (not shown).", n_terr16) else ""),
+  scale_size_area(max_size = 8, breaks = c(10, 100, 500), labels = c("$10m", "$100m", "$500m"), name = "Assets") +
+  labs(title = sprintf("Who serves rural America: %d rural credit unions by membership type%s",
+                       n_statute, if (n_terr16 > 0) sprintf(" (%d shown; %d in Guam and the US Virgin Islands not shown)", nrow(hq16), n_terr16) else ""),
+       subtitle = paste0("One dot per headquarters, coloured by field-of-membership type, on the rural rings of map 15.\n",
+                         "State-chartered credit unions are not assigned a membership type by NCUA (grey). Counts in the legend are for the dots shown."),
        caption = CAP("Field-of-membership type from TOM_CODE.")) +
   TH + guides(colour = guide_legend(nrow = 2, title.position = "top", override.aes = list(size = 3.5)),
               size = guide_legend(nrow = 1, title.position = "top"))

@@ -26,7 +26,7 @@ suppressPackageStartupMessages({ library(data.table); library(haven) })
 
 ## ---- M0.1  paths ------------------------------------------------------------
 ROOT       <- "C:/Users/sdatta/OneDrive - NCUA/Rural_CUs"
-CODE_DIR   <- file.path(ROOT, "code", "master")
+CODE_DIR   <- file.path(ROOT, "code")              # all scripts, incl. universe.R, live directly in code/
 DATA_DIR   <- file.path(ROOT, "data")
 CACHE_DIR  <- file.path(DATA_DIR, "raw")
 BRANCH_DIR <- file.path(DATA_DIR, "branch_files")
@@ -108,6 +108,7 @@ md5 <- function(f) unname(tools::md5sum(f))
 ## 12 CFR 1026.35(b)(2)(iv)(A)(1): a county neither in an MSA nor in a
 ## micropolitan area adjacent to an MSA. In Urban Influence Code terms:
 RURAL_2024 <- c(3L, 6L, 7L, 8L, 9L)                       # 9-category scheme
+METRO_2024 <- c(1L, 4L)                                   # 1 = large metro, 4 = small metro. Code 2 is MICROPOLITAN, not metro.
 RURAL_2013 <- c(4L, 6L, 7L, 8L, 9L, 10L, 11L, 12L)        # 12-category scheme
 
 ## Adjacency class inside the rural set (for Q12). 2024 codes:
