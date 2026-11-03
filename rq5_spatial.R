@@ -98,7 +98,7 @@ cat(sprintf("Baseline: growth %+.3f, ROA %+.3f\n", coef(m_base_g)["rural"], coef
 ## The label says what each code is in this study: metro, non-metro but not rural
 ## under the statute, rural next to a metro, or remote -- taken from the data.
 uic_class <- county %>% as_tibble() %>% distinct(uic24, rural24, adj_class) %>% filter(!is.na(uic24)) %>%
-  group_by(uic24) %>% summarise(rural24 = max(rural24), adj_class = first(na.omit(adj_class)), .groups = "drop") %>%
+  group_by(uic24) %>% summarise(rural24 = max(rural24), adj_class = first(adj_class[!is.na(adj_class)], default = NA_character_), .groups = "drop") %>%
   mutate(class = case_when(uic24 %in% c(1, 2)                          ~ "metro",
                            rural24 == 0                                ~ "non-metro, not rural",
                            adj_class %in% c("remote micropolitan", "remote") ~ "rural, remote",
