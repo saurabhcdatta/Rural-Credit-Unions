@@ -35,6 +35,7 @@
 ###############################################################################
 
 suppressPackageStartupMessages({
+  library(data.table)   # cr and sites are data.tables; loaded first so dplyr's verbs take precedence
   library(dplyr)
   library(tidyr)
   library(fixest)
@@ -88,8 +89,11 @@ d <- d %>%
 
 ## D4 and D5 from the office file: share of each credit union's offices that sit
 ## in rural counties (2024 codes), every quarter. Offices start in 2010Q3.
-office_share <- sites %>%
-  as_tibble() %>%
+## (the master's sites carries foreign / terr flags; older builds may not -- treat missing as FALSE)
+sites_t <- as_tibble(sites)
+for (v in c("foreign", "terr")) if (!v %in% names(sites_t)) sites_t[[v]] <- FALSE
+if (!"in_cr" %in% names(sites_t)) sites_t$in_cr <- sites_t$cu_number %in% unique(cr$cu_number)
+office_share <- sites_t %>%
   filter(in_cr == TRUE, foreign == FALSE, terr == FALSE, !is.na(fips)) %>%
   left_join(cty %>% transmute(fips, rural24_office = as.integer(uic24 %in% RURAL_2024)), by = "fips") %>%
   group_by(cu_number, qidx) %>%

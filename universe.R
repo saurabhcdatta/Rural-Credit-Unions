@@ -14,6 +14,10 @@
 # another is not a definition; it is a hope.
 ###############################################################################
 
+## data.table must be attached for the build functions below; the checks use
+## plain base R, so they work whether cr is a data.table, a data.frame or a tibble.
+suppressPackageStartupMessages(library(data.table))
+
 ## ---- the definition ---------------------------------------------------------
 UNIVERSE <- list(
   charter_types = c(1L, 2L),   # 1 = federal CU; 2 = federally insured state CU. 3 = privately insured: OUT.
@@ -25,6 +29,7 @@ UNIVERSE <- list(
 ## ---- apply it ---------------------------------------------------------------
 ## Works on numeric or character cu_type (haven can return either).
 apply_universe <- function(cr) {
+  if (!is.data.table(cr)) setDT(cr)
   ct <- suppressWarnings(as.integer(as.character(cr$cu_type)))
   n0 <- nrow(cr); k0 <- length(unique(cr$cu_number))
   cr <- cr[ct %in% UNIVERSE$charter_types & year >= UNIVERSE$first_year & assets_tot >= UNIVERSE$asset_floor]
@@ -41,7 +46,9 @@ apply_universe <- function(cr) {
 ## soft mode.
 assert_universe <- function(cr, where = "this script") {
   ct <- suppressWarnings(as.integer(as.character(cr$cu_type)))
-  bad <- cr[!ct %in% UNIVERSE$charter_types, unique(cu_number)]
+  for (v in c("cu_number", "cu_type", "year"))
+    if (!v %in% names(cr)) stop("UNIVERSE CHECK in ", where, ": cr has no column '", v, "' -- is cr the call report panel?", call. = FALSE)
+  bad <- unique(cr$cu_number[!ct %in% UNIVERSE$charter_types])                   # base R: works on any data frame
   if (length(bad)) stop(sprintf(
     "UNIVERSE VIOLATION in %s: cr contains %d credit union(s) outside charter types %s (e.g. cu_number %s). ",
     where, length(bad), paste(UNIVERSE$charter_types, collapse = "/"), paste(head(bad, 5), collapse = ", ")),
@@ -56,7 +63,7 @@ assert_universe <- function(cr, where = "this script") {
 ## ---- and the same for sites, so no map or office count can include them -----
 assert_sites_universe <- function(sites, cr, where = "this script") {
   if (!"in_cr" %in% names(sites)) stop("UNIVERSE VIOLATION in ", where, ": sites lacks in_cr", call. = FALSE)
-  stray <- sites[in_cr == TRUE & !cu_number %in% unique(cr$cu_number), uniqueN(cu_number)]
+  stray <- length(unique(sites$cu_number[sites$in_cr %in% TRUE & !sites$cu_number %in% unique(cr$cu_number)]))
   if (stray) stop("UNIVERSE VIOLATION in ", where, ": ", stray, " credit unions flagged in_cr are not in cr", call. = FALSE)
   cat(sprintf("  [ok] sites gate (%s): in_cr matches cr\n", where)); invisible(TRUE)
 }
