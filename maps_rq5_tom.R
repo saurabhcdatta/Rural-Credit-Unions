@@ -78,47 +78,86 @@ p15 <- ggplot() +
   TH + leg(1)
 sv(p15, "map15_what_counts_as_rural")
 
-## ---- T2  TOM_CODE: read it, see what the codes mean ----------------------------------
-## TOM_CODE is not in cr (3_callreport.R reads ~45 columns). Read just it, with
-## the keys, from the Stata panel. The Stata value labels carry the meanings.
+## ---- T2  TOM_CODE: read it and give every code its meaning -------------------------
+## TOM_CODE is not in cr (3_callreport.R reads ~45 columns), so read just it from
+## the Stata panel. The .dta has no value labels, so the meanings come from the
+## NCUA data dictionary (TOM Codes, November 2026), typed in once here.
+TOM_BOOK <- tribble(
+  ~tom_code, ~tom_label,                                                   ~family,
+   0, "Community (urban or rural)",                                        "Community",
+  66, "Community - Rural District",                                        "Community",
+  77, "Community - CBSA(+) Adjacent",                                      "Community",
+   1, "Associational - religious",                                         "Single bond: association",
+   2, "Associational - fraternal",                                         "Single bond: association",
+   3, "Associational - other",                                             "Single bond: association",
+   4, "Educational",                                                       "Single bond: employer",
+   5, "Military",                                                          "Single bond: employer",
+   6, "Federal, state, local government",                                  "Single bond: employer",
+  10, "Manufacturing - chemicals",                                         "Single bond: employer",
+  11, "Manufacturing - petroleum refining",                                "Single bond: employer",
+  12, "Manufacturing - primary and fabricated metals",                     "Single bond: employer",
+  13, "Manufacturing - machinery",                                         "Single bond: employer",
+  14, "Manufacturing - transportation equipment",                          "Single bond: employer",
+  15, "Manufacturing - all other",                                         "Single bond: employer",
+  20, "Service - finance, insurance, real estate, trade",                  "Single bond: employer",
+  21, "Service - health care",                                             "Single bond: employer",
+  22, "Service - transportation",                                          "Single bond: employer",
+  23, "Service - communications and utilities",                            "Single bond: employer",
+  24, "Single common bond - other",                                        "Single bond: employer",
+  34, "Multiple group - primarily educational",                            "Multiple common bond",
+  35, "Multiple group - primarily military",                               "Multiple common bond",
+  36, "Multiple group - primarily federal, state, local government",       "Multiple common bond",
+  40, "Multiple group - primarily chemical",                               "Multiple common bond",
+  41, "Multiple group - primarily petroleum refining",                     "Multiple common bond",
+  42, "Multiple group - primarily primary and fabricated metals",          "Multiple common bond",
+  43, "Multiple group - primarily machinery",                              "Multiple common bond",
+  44, "Multiple group - primarily transportation equipment",               "Multiple common bond",
+  49, "Multiple group - primarily other manufacturing",                    "Multiple common bond",
+  50, "Multiple group - primarily finance, insurance, real estate, trade", "Multiple common bond",
+  51, "Multiple group - primarily health care",                            "Multiple common bond",
+  52, "Multiple group - primarily transportation",                         "Multiple common bond",
+  53, "Multiple group - primarily communications and utilities",           "Multiple common bond",
+  54, "Multiple common bond - other",                                      "Multiple common bond",
+  98, "Multiple group - other",                                            "Multiple common bond",
+  60, "Corporate credit unions",                                           "Other",
+  99, "Non-Federal Credit Union (state charter; type not reported)",       "State charter (type not reported)")
+FAMS <- c("Community", "Multiple common bond", "Single bond: employer", "Single bond: association",
+          "State charter (type not reported)", "Other")
+
 hdr <- haven::read_dta(PANEL_FILE, n_max = 0)
 tom_col <- grep("^tom", names(hdr), ignore.case = TRUE, value = TRUE)[1]
 if (is.na(tom_col)) stop("No TOM column in the panel. Names containing 'tom' or 'memb': ",
                          paste(grep("tom|memb", names(hdr), ignore.case = TRUE, value = TRUE), collapse = ", "))
 cat("TOM column:", tom_col, "\n")
-tom_labels <- attr(hdr[[tom_col]], "labels")                                     # named vector: label -> code
 tom_raw <- haven::read_dta(PANEL_FILE, col_select = tidyselect::all_of(c("cu_number", "year", "quarter", tom_col)))
+
+## Clean the code. It is stored as TEXT, so "0" and "00", "1" and "01" are the
+## same code. A handful of values are not in the dictionary at all (three-digit
+## codes such as 010, 201, 701, 959; and 07, 9, 70, 71) -- entry errors. Those
+## are set to missing and filled from the SAME credit union's valid code in the
+## nearest quarter (earlier first, then later). Anything still missing -> "Other".
 tom <- tom_raw %>%
   transmute(cu_number = as.numeric(cu_number),
             qidx = as.integer(year) * 4L + as.integer(quarter),
-            tom_code = as.integer(haven::zap_labels(.data[[tom_col]])))
+            raw  = trimws(as.character(haven::zap_labels(.data[[tom_col]])))) %>%
+  mutate(as_num   = suppressWarnings(as.integer(raw)),
+         valid    = nchar(raw) %in% 1:2 & as_num %in% TOM_BOOK$tom_code,
+         tom_code = ifelse(valid, as_num, NA_integer_))
 rm(tom_raw)
-## the qidx must line up with cr's -- check on the latest quarter
+
+## how much is invalid, before filling
+tom %>% summarise(rows = n(), invalid_rows = sum(!valid & raw != ""), blank_rows = sum(raw == "" | is.na(raw)),
+                  pct_invalid = round(100 * mean(!valid), 2)) %>% print()       ## LOOK -- expect well under 1%
+tom %>% filter(!valid, raw != "") %>% count(raw, sort = TRUE) %>% print(n = 30)  ## LOOK -- the stray codes
+
+tom <- tom %>%
+  arrange(cu_number, qidx) %>%
+  group_by(cu_number) %>%
+  tidyr::fill(tom_code, .direction = "downup") %>%
+  ungroup() %>%
+  select(cu_number, qidx, tom_code)
 stopifnot("qidx does not match cr -- check how 3_callreport.R builds qidx" = QZ %in% tom$qidx)
-
-code_book <- tibble(tom_code = as.integer(tom_labels), tom_label = names(tom_labels))
-if (nrow(code_book) == 0) {
-  ## no labels in the .dta: write a template to fill from the 5300 data dictionary, then re-run T2
-  tmpl <- tom %>% filter(qidx == QZ) %>% count(tom_code) %>% mutate(tom_label = "", family = "")
-  write.csv(tmpl, file.path(MAP_DIR, "tom_codebook_TO_FILL.csv"), row.names = FALSE)
-  stop("The panel has no TOM labels. Fill tom_label (from the data dictionary) in ", file.path(MAP_DIR, "tom_codebook_TO_FILL.csv"),
-       ", save it as tom_codebook.csv in the same folder, and re-run this block.")
-}
-if (file.exists(file.path(MAP_DIR, "tom_codebook.csv")))                          # a hand-filled book wins
-  code_book <- read.csv(file.path(MAP_DIR, "tom_codebook.csv")) %>% transmute(tom_code = as.integer(tom_code), tom_label)
-
-## five families, by keyword on the label. Order matters: "multiple" first.
-code_book <- code_book %>%
-  mutate(l = tolower(tom_label),
-         family = case_when(
-           grepl("multiple", l)                                      ~ "Multiple common bond",
-           grepl("community|rural district|geograph|underserved", l) ~ "Community",
-           grepl("relig|fratern|associat|church", l)                 ~ "Single bond: association",
-           grepl("occupat|manufact|service|govern|military|educat|employ|health|hospital|utilit|communicat|transport", l)
-                                                                     ~ "Single bond: employer",
-           TRUE                                                      ~ "Other")) %>%
-  select(-l)
-FAMS <- c("Community", "Multiple common bond", "Single bond: employer", "Single bond: association", "Other")
+code_book <- TOM_BOOK
 
 ## what the codes are and how many credit unions carry each, latest quarter
 latest_tom <- cr %>% as_tibble() %>% filter(qidx == QZ) %>% select(cu_number, rural) %>%
@@ -129,6 +168,12 @@ latest_tom %>% count(tom_code, tom_label, family, rural) %>%
   tidyr::pivot_wider(names_from = rural, values_from = n, names_prefix = "rural_", values_fill = 0) %>%
   arrange(family, tom_code) %>% print(n = Inf, width = Inf)                      ## LOOK -- CHECK THE FAMILY OF EVERY CODE before going on
 
+## check: are state charters (cu_type 2) the ones coded 99? If so, membership type
+## is only known for federal charters, and every result below says so.
+cr %>% as_tibble() %>% filter(qidx == QZ) %>% select(cu_number, cu_type) %>%
+  left_join(latest_tom %>% select(cu_number, family), by = "cu_number") %>%
+  count(cu_type, family) %>% print(n = Inf)                                     ## LOOK -- expect type 2 almost all "State charter"
+
 ## ---- T3  the breakdown: mix of membership types, rural vs non-rural ------------------
 mix <- latest_tom %>%
   count(rural, family) %>%
@@ -136,7 +181,8 @@ mix <- latest_tom %>%
 print(mix)                                                                       ## LOOK -- does rural lean community?
 
 FAM_COLS <- c("Community" = "#0072B2", "Multiple common bond" = "#E69F00",       # Okabe-Ito: built for colour-blind readers
-              "Single bond: employer" = "#009E73", "Single bond: association" = "#CC79A7", "Other" = "#8C8C8C")
+              "Single bond: employer" = "#009E73", "Single bond: association" = "#CC79A7",
+              "State charter (type not reported)" = "#8C8C8C", "Other" = "#333333")
 p_mix <- mix %>%
   mutate(segment = ifelse(rural == 1L, "Rural credit unions", "Other credit unions")) %>%
   ggplot(aes(x = pct, y = segment, fill = family)) +
@@ -208,7 +254,7 @@ p16 <- ggplot() +
   scale_size_area(max_size = 6, breaks = c(10, 100, 500), labels = c("$10m", "$100m", "$500m"), name = "Assets") +
   labs(title = sprintf("Who serves rural America: %d rural credit unions by membership type",
                        nrow(hq16)),
-       subtitle = sprintf("One dot per headquarters, coloured by field-of-membership type, on the rural rings of map 15.%s",
+       subtitle = sprintf("One dot per headquarters, coloured by field-of-membership type, on the rural rings of map 15. State charters report no type (grey).%s",
                           if (n_terr16 > 0) sprintf(" Plus %d in the territories (not shown).", n_terr16) else ""),
        caption = CAP("Field-of-membership type from TOM_CODE.")) +
   TH + guides(colour = guide_legend(nrow = 2, title.position = "top", override.aes = list(size = 3.5)),
