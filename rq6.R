@@ -61,8 +61,13 @@ DQ_START <- 2022L * 4L + 1L      # 2022Q1: farm delinquency and charge-offs begi
 cat("Latest quarter:", q_lab(QZ), "| analysis window:", q_lab(AG_START), "to", q_lab(QZ), "\n")
 
 ## the loan columns used below, read from the Stata panel with the keys
-PANEL_LOANS <- c("lns_re_1_tot", "lns_re_oth_fr_ncomm", "lns_re_oth_ar_ncomm", "lns_auto", "lns_cc",
-                 "lns_student", "lns_comm", "lns_comm_ag")
+PANEL_LOANS <- c("lns_re_1_tot", "lns_re_1_tot_ncomm", "lns_re_oth_fr_ncomm", "lns_re_oth_ar_ncomm",
+                 "lns_auto", "lns_cc", "lns_student", "lns_comm", "lns_comm_ag")
+## The 2022 form split real estate into commercial and non-commercial:
+##   first mortgages  lns_re_1_tot to 2021Q4, lns_re_1_tot_ncomm from 2022Q1
+##   other real estate (home equity, second liens) only from 2022Q1
+## Any pre-2022 other-real-estate field, if the panel has one, shows here:
+print(grep("re_oth|re_jr|junior|heloc|re_2nd|equity", names(hdr), value = TRUE, ignore.case = TRUE))   ## LOOK -- send this list
 hdr <- haven::read_dta(PANEL_FILE, n_max = 0)
 dq_panel <- grep("^dq_", names(hdr), value = TRUE)
 print(setdiff(PANEL_LOANS, names(hdr)))                                          ## LOOK -- should be empty
@@ -118,7 +123,7 @@ if ("lns_comm_ag" %in% names(d))
 ## From here on the analysis uses 2017Q3 onward only, so every type covers the
 ## same years. Farm loans are a slice of business (commercial) lending.
 d <- d %>% filter(qidx >= AG_START) %>%
-  mutate(first_mortgage = as.numeric(lns_re_1_tot),
+  mutate(first_mortgage = coalesce(as.numeric(lns_re_1_tot), as.numeric(lns_re_1_tot_ncomm)),   # bridged across 2022
          other_re       = ifelse(is.na(lns_re_oth_fr_ncomm) & is.na(lns_re_oth_ar_ncomm), NA_real_,
                                  coalesce(as.numeric(lns_re_oth_fr_ncomm), 0) + coalesce(as.numeric(lns_re_oth_ar_ncomm), 0)),
          auto           = as.numeric(lns_auto),
@@ -129,6 +134,13 @@ d <- d %>% filter(qidx >= AG_START) %>%
 TYPES <- c("first_mortgage", "other_re", "auto", "credit_card", "student", "business", "agricultural")
 for (k in TYPES) d[[paste0("sh_", k)]] <- ifelse(d$lns_tot > 0, 100 * pmax(d[[k]], 0) / d$lns_tot, NA_real_)
 SH <- paste0("sh_", TYPES)
+
+## continuity check across the 2022 switch: the average first-mortgage share should
+## move smoothly from 2021 to 2022, not jump (a jump = the two fields measure different things)
+d %>% filter(lns_tot > 0, qidx >= 2020L * 4L + 1L, qidx <= 2023L * 4L + 4L) %>%
+  group_by(quarter = q_lab(qidx)) %>%
+  summarise(mean_first_mortgage_share = round(mean(sh_first_mortgage, na.rm = TRUE), 1),
+            pct_reported = round(100 * mean(!is.na(first_mortgage)), 1), .groups = "drop") %>% print(n = Inf)   ## LOOK -- smooth across 2021Q4 -> 2022Q1?
 
 ## coverage: the six types (farm excluded -- it is inside business) should be most
 ## of the book. The remainder is mainly unsecured personal loans and leases.
@@ -255,7 +267,7 @@ if (length(dq_cols))
     print(width = Inf)                                                           ## LOOK
 
 ## ---- 6.8  chart, CSVs, slide numbers -------------------------------------------------
-LAB <- c(first_mortgage = "First mortgages", other_re = "Home equity & other real estate", auto = "Auto",
+LAB <- c(first_mortgage = "First mortgages", other_re = "Home equity & other real estate (2022 on)", auto = "Auto",
          credit_card = "Credit cards", student = "Student", business = "Business (commercial)",
          agricultural = "  of which: farm")
 p6 <- ll %>%
