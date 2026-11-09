@@ -40,7 +40,7 @@ pts[, .(lenders = .N, farm_loans_bn = round(sum(farm_m) / 1e3, 2)), by = group] 
 ## ---- 17.2  the base: rural counties, farming-dependent ones darker ----------------
 K17 <- K[, .(fips, base = fifelse(rural24 == 0L, "Non-rural county",
                           fifelse(farming %in% TRUE, "Rural, farming-dependent", "Rural, other")))]
-BASE_COLS <- c("Non-rural county" = C_NONRURAL, "Rural, other" = "#E6DDC6", "Rural, farming-dependent" = "#B08D57")
+BASE_COLS <- c("Non-rural county" = C_NONRURAL, "Rural, other" = "#D9C9A3", "Rural, farming-dependent" = "#9C7A45")   # three clearly separate steps
 K17[, base := factor(base, levels = names(BASE_COLS))]
 M17 <- merge(cty_sf, K17, by = "fips", all.x = TRUE)
 
@@ -54,9 +54,10 @@ DOT_COLS <- c("Rural credit union" = "#0E4C55", "Non-rural credit union" = "#E69
 p17 <- ggplot() +
   geom_sf(data = M17, aes(fill = base), colour = C_CTY, linewidth = 0.05) +
   geom_sf(data = st_sf, fill = NA, colour = C_STATE, linewidth = 0.3) +
-  scale_fill_manual(values = BASE_COLS, name = NULL, na.value = C_NONRURAL) +
-  geom_point(data = pts[order(-farm_m)], aes(X, Y, size = farm_m, colour = group), alpha = 0.8) +
-  scale_colour_manual(values = DOT_COLS, name = NULL) +
+  ## filled circles with a white rim, largest drawn first so small dots stay on top
+  geom_point(data = pts[order(-farm_m)], aes(X, Y, size = farm_m, fill = group),
+             shape = 21, colour = "white", stroke = 0.35, alpha = 0.85) +
+  scale_fill_manual(values = c(BASE_COLS, DOT_COLS), breaks = c(names(BASE_COLS), names(DOT_COLS)), name = NULL, na.value = C_NONRURAL) +
   scale_size_area(max_size = 9, breaks = c(1, 10, 50, 150), labels = c("$1m", "$10m", "$50m", "$150m"), name = "Farm loans") +
   labs(title = sprintf("%d credit unions lend to farms: %d rural, %d non-rural\nRural ones hold %d%% of credit-union farm loans", n_r + n_o, n_r, n_o, sh_r),
        subtitle = sprintf(paste0("One dot per credit union that lends to farms, at its headquarters county, sized by farm loans. ",
@@ -64,8 +65,7 @@ p17 <- ggplot() +
                           ff[farming %in% TRUE, uniqueN(cu_number)],
                           ff[farming %in% TRUE & lends_to_farms == TRUE, uniqueN(cu_number)]),
        caption = CAP("Farm loans = agricultural commercial loans (5300 accounts 042A5-042A9), incl. participations bought from other lenders; lender = any balance or YTD farm lending in the past two years (AgLending definition). Headquarters county, not farm location.")) +
-  TH + guides(fill = guide_legend(order = 1, nrow = 1, title.position = "top"),
-              colour = guide_legend(order = 2, nrow = 1, override.aes = list(size = 4)),
-              size = guide_legend(order = 3, nrow = 1, title.position = "top"))
+  TH + guides(fill = guide_legend(order = 1, nrow = 1, override.aes = list(shape = c(22, 22, 22, 21, 21), size = c(5, 5, 5, 4, 4), colour = c("grey70", "grey70", "grey70", "white", "white"))),
+              size = guide_legend(order = 2, nrow = 1, title.position = "top", override.aes = list(shape = 21, fill = "#5B6B72", colour = "white")))
 sv(p17, "map17_who_lends_to_farms")
 cat("Map 17 written to", MAP_DIR, "\n")
