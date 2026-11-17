@@ -30,6 +30,7 @@
 # WHAT EACH BLOCK DOES
 #   7.0  gates and set-up
 #   7.1  one row per credit union: first and last quarter, size at entry
+#   7.1b does the panel stop at $1m?   7.1c why existing CUs appear late
 #   7.2  the entrants: how many, how big, rural vs other     (THE COUNT)
 #   7.3  entries and exits by year, and rates per 100         (THE DROUGHT)
 #   7.4  what became of the rural entrants                    (SURVIVAL)
@@ -111,6 +112,95 @@ cat("Entrants with no year opened:", sum(spell$entered & is.na(spell$year_opened
 spell %>% summarise(credit_unions = n(), entrants = sum(entered), exits = sum(exited),
                     with_gaps = sum(has_gap)) %>% print()                    ## LOOK
 
+## ---- 7.1b  does the panel stop at $1 million? -------------------------------------------
+## Many "existing CU appearing late" entrants first report at $1.00-1.07m. That
+## pattern suggests the panel holds only credit unions of $1m or more. If so:
+##   - an "entrant" may just be an old credit union growing past $1m;
+##   - an "exit" may just be a credit union shrinking below $1m, not closing;
+##   - a start-up that took 2+ years to reach $1m is missed by the year-opened rule.
+cat("Smallest assets anywhere in the panel: $", format(min(p$assets_tot, na.rm = TRUE), big.mark = ","), "\n")
+cat("Rows under $1m:", sum(p$assets_tot < 1e6, na.rm = TRUE), "  (0 = the panel stops at $1m)\n")   ## LOOK
+
+## entrants that first appear just over $1m, and exits last seen just over $1m
+spell %>% filter(entered) %>%
+  group_by(grp = ifelse(rural_first == 1L, "Rural", "Other")) %>%
+  summarise(entrants = n(), first_seen_1.0_to_1.1m = sum(assets_first < 1.1e6), .groups = "drop") %>% print()   ## LOOK
+spell %>% filter(exited) %>%
+  group_by(grp = ifelse(rural_last == 1L, "Rural", "Other")) %>%
+  summarise(exits = n(), last_seen_1.0_to_1.1m = sum(assets_last < 1.1e6),
+            came_back_later = sum(has_gap), .groups = "drop") %>% print()                                   ## LOOK
+
+## a wider start-up count that does not depend on when it first reached $1m:
+## any credit union in the panel that OPENED in 2010 or later
+spell %>% filter(!is.na(year_opened), year_opened >= q_year(QA)) %>%
+  group_by(grp = ifelse(rural_first == 1L, "Rural", "Other")) %>%
+  summarise(opened_2010_or_later = n(), still_open = sum(!exited),
+            first_report_years_after_opening = median(entry_year - year_opened), .groups = "drop") %>% print()   ## LOOK
+
+
+## ---- 7.1c  why did existing credit unions appear late? -----------------------------------
+## Each "existing CU appearing late" gets its most likely reason, tested in this order:
+##   1 Charter conversion  another credit union in the same state made its last report in the
+##                         three quarters before (or the same quarter), at a similar size (+/-25%)
+##                         -- the same institution under a new charter number
+##   2 Newly insured       the raw panel shows it as privately insured (type 3) before
+##   3 Crossed $1m         first report under $1.1m (grew past the panel's size floor)
+##   4 Missing 2010Q1      first report in 2010Q2, the panel's second quarter
+##   5 Unexplained         none of the above -- look these up by hand
+late <- spell %>% filter(entry_kind == "Existing CU appearing late")
+cat("Existing credit unions appearing late:", nrow(late), "\n")              ## LOOK -- 341 (43 rural)
+
+## test 1: a matching exit just before the entry
+last_fips <- p %>% group_by(cu_number) %>% summarise(fips_last = last(fips), .groups = "drop")
+gone <- spell %>% filter(exited) %>% left_join(last_fips, by = "cu_number") %>%
+  select(old_number = cu_number, state, old_last_q = last_q, old_assets = assets_last, fips_last)
+conv <- late %>% select(cu_number, state, first_q, assets_first, fips_first) %>%
+  inner_join(gone, by = "state", relationship = "many-to-many") %>%
+  filter(old_last_q >= first_q - 3L, old_last_q <= first_q,
+         abs(old_assets / assets_first - 1) <= 0.25, old_number != cu_number) %>%
+  group_by(cu_number) %>%
+  slice_min(abs(old_assets / assets_first - 1), n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  transmute(cu_number, old_number, same_county = fips_last == fips_first)
+cat("Matched to an earlier charter number:", nrow(conv), "| same county:", sum(conv$same_county), "\n")   ## LOOK
+
+## test 2: privately insured before (raw panel, all charter types; five columns only)
+raw <- haven::read_dta(PANEL_FILE, col_select = tidyselect::all_of(c("cu_number", "year", "quarter", "cu_type", "assets_tot"))) %>%
+  haven::zap_labels() %>%
+  mutate(cu_number = as.numeric(cu_number),
+         qidx = as.integer(year) * 4L + as.integer(quarter),
+         cu_type = suppressWarnings(as.integer(as.character(cu_type)))) %>%
+  filter(cu_number %in% late$cu_number)
+before <- raw %>% inner_join(late %>% select(cu_number, first_q), by = "cu_number") %>%
+  filter(qidx < first_q, qidx >= first_q - 8L) %>%                          # the two years before it appears
+  group_by(cu_number) %>%
+  summarise(rows_before = n(),
+            type3_before = any(cu_type == 3L, na.rm = TRUE),
+            under_1m_before = any(assets_tot < 1e6, na.rm = TRUE), .groups = "drop")
+cat("Late appearers with earlier rows in the raw panel:", nrow(before),
+    "| privately insured before:", sum(before$type3_before),
+    "| under $1m before:", sum(before$under_1m_before), "\n")               ## LOOK -- if 'under $1m before' > 0, the floor is in our build, not the panel
+
+## put the reasons together
+reasons <- late %>% select(cu_number, first_q, assets_first) %>%
+  left_join(conv, by = "cu_number") %>%
+  left_join(before, by = "cu_number") %>%
+  mutate(late_reason = case_when(
+           !is.na(old_number)        ~ "1 Charter conversion (new number)",
+           type3_before %in% TRUE    ~ "2 Newly federally insured",
+           assets_first < 1.1e6      ~ "3 Crossed $1m",
+           first_q == QA + 1L        ~ "4 Missing 2010Q1",
+           TRUE                      ~ "5 Unexplained")) %>%
+  select(cu_number, late_reason, old_number)
+spell <- spell %>% select(-any_of(c("late_reason", "old_number"))) %>% left_join(reasons, by = "cu_number")
+
+spell %>% filter(entry_kind == "Existing CU appearing late") %>%
+  count(grp = ifelse(rural_first == 1L, "Rural", "Other"), late_reason) %>%
+  tidyr::pivot_wider(names_from = grp, values_from = n, values_fill = 0) %>% print()   ## LOOK -- the footnote table
+spell %>% filter(entry_kind == "Existing CU appearing late", rural_first == 1L, late_reason == "5 Unexplained") %>%
+  select(cu_number, state, fips_first, first_q, year_opened, assets_first) %>%
+  mutate(first_quarter = q_lab(first_q), assets_first_m = round(assets_first / 1e6, 2)) %>%
+  select(-first_q, -assets_first) %>% print(n = Inf)                       ## LOOK -- rural ones to check by hand
 ## ---- 7.2  the entrants: how many, how big --------------------------------------------
 entr <- spell %>% filter(entered)
 entr %>%
@@ -183,7 +273,8 @@ rural_entrants <- re %>%
             status = ifelse(exited, paste("gone after", q_lab(last_q)), "still open"),
             year_opened, assets_first_m = round(assets_first / 1e6, 2), members_first,
             assets_now_m = ifelse(exited, NA, round(assets_last / 1e6, 2)),
-            rural_now = rural_last, came_and_went = has_gap) %>%
+            rural_now = rural_last, came_and_went = has_gap,
+            late_reason, old_number) %>%
   arrange(first_quarter)
 print(rural_entrants, n = Inf, width = Inf)                                  ## LOOK -- the whole list fits on a page
 cat("Universe check -- charter types on the list:", paste(sort(unique(rural_entrants$cu_type)), collapse = ", "), "(only 1 and 2)\n")
