@@ -1,0 +1,191 @@
+###############################################################################
+# rq7.R  --  RESEARCH QUESTION 7   (standalone, 10 Nov 2026)
+# "Is anyone starting new rural credit unions?"
+#
+# Rural Credit Unions Study | ROAD Act Sec. 909 | NCUA OCE
+#
+# THE QUESTION IN PLAIN WORDS
+#   How many new credit unions have appeared in rural counties since 2010, how
+#   does that compare with how many left, and what became of the new ones?
+#
+# EXPECTATION (handoff v4, written before running)
+#   Very few: roughly one genuinely new rural credit union a year against about
+#   fifteen leaving; most entrants small; many gone within ten years.
+#
+# DEFINITIONS (all from the call report panel, nothing else needed)
+#   Entrant      a credit union whose FIRST quarter in the panel is after the
+#                panel opens. Rural = its headquarters county was rural (2024
+#                codes) in that first quarter.
+#   New charter  an entrant under $2 million in assets at its first report --
+#                a start-up. Larger entrants are most likely conversions (e.g.
+#                a state charter newly federally insured) or re-registrations.
+#                The $5 million cut is shown as a check.
+#   Exit         last quarter before the panel ends (merger, liquidation or
+#                conversion -- outcome codes are not used, they are unverified).
+#   Rural rates  per 100 credit unions existing at the start of each year.
+#
+# WHAT EACH BLOCK DOES
+#   7.0  gates and set-up
+#   7.1  one row per credit union: first and last quarter, size at entry
+#   7.2  the entrants: how many, how big, rural vs other     (THE COUNT)
+#   7.3  entries and exits by year, and rates per 100         (THE DROUGHT)
+#   7.4  what became of the rural entrants                    (SURVIVAL)
+#   7.5  the list of rural entrants (for the report appendix / CURE check)
+#   7.6  chart, CSVs, slide numbers
+#
+# REQUIRES  cr in memory (3_callreport.R or rq_load.R) with cu_number, qidx,
+#           fips, state_code, rural, assets_tot, members, networth_pct, cu_type;
+#           cu_name if available. universe.R in CODE_DIR. OUT_DIR set.
+#           Packages: dplyr, tidyr, ggplot2.
+#
+# Sequential blocks. Run each, read what it prints (## LOOK), then move on.
+###############################################################################
+
+suppressPackageStartupMessages({ library(dplyr); library(tidyr); library(ggplot2) })
+
+## ---- 7.0  gates and set-up -----------------------------------------------------------
+if (!exists("assert_universe")) source(file.path(CODE_DIR, "universe.R"))
+assert_universe(cr, "rq7.R")
+OUT7 <- file.path(OUT_DIR, "rq7"); dir.create(OUT7, recursive = TRUE, showWarnings = FALSE)
+q_lab <- function(q) sprintf("%dQ%d", (q - 1L) %/% 4L, ((q - 1L) %% 4L) + 1L)
+q_year <- function(q) (q - 1L) %/% 4L
+NEW_CUT  <- 2e6      # under $2m at first report = a new charter
+NEW_CUT2 <- 5e6      # check
+p <- cr %>% as_tibble()
+QA <- min(p$qidx); QZ <- max(p$qidx)
+cat("Panel:", q_lab(QA), "to", q_lab(QZ), "|", n_distinct(p$cu_number), "credit unions\n")   ## LOOK
+nm_col <- intersect(c("cu_name", "CU_NAME", "name"), names(p))[1]
+cat("Name column:", ifelse(is.na(nm_col), "none (list will show numbers only)", nm_col), "\n")
+
+## ---- 7.1  one row per credit union -----------------------------------------------------
+spell <- p %>%
+  arrange(cu_number, qidx) %>%
+  group_by(cu_number) %>%
+  summarise(name        = if (!is.na(nm_col)) first(.data[[nm_col]]) else NA_character_,
+            cu_type     = first(cu_type),
+            state       = first(state_code),
+            fips_first  = first(fips),
+            rural_first = first(rural),
+            rural_last  = last(rural),
+            first_q     = first(qidx),
+            last_q      = last(qidx),
+            n_quarters  = n(),
+            assets_first  = first(assets_tot),
+            members_first = first(members),
+            nw_first      = first(networth_pct),
+            assets_last   = last(assets_tot),
+            members_last  = last(members),
+            .groups = "drop") %>%
+  mutate(entered   = first_q > QA,
+         exited    = last_q < QZ,
+         has_gap   = n_quarters < (last_q - first_q + 1L),        # dropped out and came back
+         entry_year = q_year(first_q),
+         exit_year  = ifelse(exited, q_year(last_q), NA_integer_),
+         new_charter  = entered & assets_first < NEW_CUT,
+         new_charter5 = entered & assets_first < NEW_CUT2)
+spell %>% summarise(credit_unions = n(), entrants = sum(entered), exits = sum(exited),
+                    with_gaps = sum(has_gap)) %>% print()                    ## LOOK
+
+## ---- 7.2  the entrants: how many, how big --------------------------------------------
+entr <- spell %>% filter(entered)
+entr %>%
+  group_by(rural = ifelse(rural_first == 1L, "Rural", "Other")) %>%
+  summarise(entrants = n(),
+            new_charters_under_2m = sum(new_charter),
+            new_charters_under_5m = sum(new_charter5),
+            likely_conversions    = sum(!new_charter),
+            median_assets_first_m = round(median(assets_first) / 1e6, 2),
+            pct_state_chartered   = round(100 * mean(cu_type == 2L), 0),
+            .groups = "drop") %>% print()                                    ## LOOK -- the count (earlier work: about 47 rural, 29 new)
+
+## ---- 7.3  entries and exits by year, and rates per 100 --------------------------------
+## existing at the start of each year = present in that year's first quarter
+yrs <- seq(q_year(QA) + 1L, q_year(QZ))
+base <- p %>% filter(qidx %in% (yrs * 4L + 1L)) %>%
+  mutate(year = q_year(qidx), grp = ifelse(rural == 1L, "Rural", "Other")) %>%
+  count(year, grp, name = "existing")
+ent_y <- entr %>% mutate(grp = ifelse(rural_first == 1L, "Rural", "Other")) %>%
+  group_by(year = entry_year, grp) %>%
+  summarise(entrants = n(), new_charters = sum(new_charter), .groups = "drop")
+ext_y <- spell %>% filter(exited) %>% mutate(grp = ifelse(rural_last == 1L, "Rural", "Other")) %>%
+  count(year = exit_year, grp, name = "exits")
+flows <- base %>% left_join(ent_y, by = c("year", "grp")) %>% left_join(ext_y, by = c("year", "grp")) %>%
+  mutate(across(c(entrants, new_charters, exits), ~ replace_na(.x, 0L)),
+         new_per_100  = round(100 * new_charters / existing, 2),
+         exits_per_100 = round(100 * exits / existing, 2),
+         exits_per_new = ifelse(new_charters > 0, round(exits / new_charters, 1), NA))
+flows %>% filter(grp == "Rural") %>% select(year, existing, entrants, new_charters, exits, new_per_100, exits_per_100) %>%
+  print(n = Inf)                                                             ## LOOK -- rural, year by year
+tot <- flows %>% group_by(grp) %>%
+  summarise(new_charters = sum(new_charters), entrants = sum(entrants), exits = sum(exits),
+            new_per_100_per_year  = round(100 * sum(new_charters) / sum(existing), 2),
+            exits_per_100_per_year = round(100 * sum(exits) / sum(existing), 2), .groups = "drop") %>%
+  mutate(exits_per_new_charter = round(exits / pmax(new_charters, 1), 0))
+print(tot)                                                                   ## LOOK -- the drought, rural vs other
+## the recent five years
+flows %>% filter(year > max(year) - 5, grp == "Rural") %>% select(year, new_charters, exits) %>% print()   ## LOOK
+
+## ---- 7.4  what became of the rural entrants -------------------------------------------
+re <- entr %>% filter(rural_first == 1L) %>%
+  mutate(type = ifelse(new_charter, "New charter (< $2m)", "Larger entrant (likely conversion)"),
+         years_followed = (pmin(last_q, QZ) - first_q) / 4,
+         gone_5y  = exited & (last_q - first_q) < 20L,
+         followed_5y = (QZ - first_q) >= 20L)
+re %>% group_by(type) %>%
+  summarise(entrants = n(),
+            still_open = sum(!exited),
+            pct_still_open = round(100 * mean(!exited), 0),
+            gone_within_5y_pct = round(100 * sum(gone_5y & followed_5y) / pmax(sum(followed_5y), 1), 0),
+            median_assets_now_m = round(median(assets_last[!exited]) / 1e6, 1),
+            median_members_now  = median(members_last[!exited]),
+            .groups = "drop") %>% print()                                    ## LOOK -- survival
+## growth of the survivors: from first report to now
+re %>% filter(!exited, new_charter) %>%
+  summarise(survivors = n(),
+            median_assets_first_m = round(median(assets_first) / 1e6, 2),
+            median_assets_now_m   = round(median(assets_last) / 1e6, 2),
+            median_members_first  = median(members_first),
+            median_members_now    = median(members_last)) %>% print()        ## LOOK -- did the survivors grow?
+## same comparison for non-rural new charters, as a benchmark
+entr %>% filter(rural_first == 0L, new_charter) %>%
+  summarise(new_charters = n(), pct_still_open = round(100 * mean(!exited), 0)) %>% print()   ## LOOK -- benchmark
+
+## ---- 7.5  the list of rural entrants ---------------------------------------------------
+rural_entrants <- re %>%
+  transmute(cu_number, name, state, fips_first, cu_type, type,
+            first_quarter = q_lab(first_q),
+            status = ifelse(exited, paste("gone after", q_lab(last_q)), "still open"),
+            assets_first_m = round(assets_first / 1e6, 2), members_first,
+            assets_now_m = ifelse(exited, NA, round(assets_last / 1e6, 2)),
+            rural_now = rural_last, came_and_went = has_gap) %>%
+  arrange(first_quarter)
+print(rural_entrants, n = Inf, width = Inf)                                  ## LOOK -- the whole list fits on a page
+cat("Universe check -- charter types on the list:", paste(sort(unique(rural_entrants$cu_type)), collapse = ", "), "(only 1 and 2)\n")
+
+## ---- 7.6  chart, CSVs, slide numbers ---------------------------------------------------
+rplot <- flows %>% filter(grp == "Rural") %>%
+  select(year, `New rural charters` = new_charters, `Rural credit unions that left` = exits) %>%
+  pivot_longer(-year, names_to = "flow", values_to = "n")
+p7 <- ggplot(rplot, aes(year, n, fill = flow)) +
+  geom_col(position = position_dodge(width = 0.75), width = 0.7) +
+  scale_fill_manual(values = c("New rural charters" = "#0E4C55", "Rural credit unions that left" = "#C8553D"), name = NULL) +
+  scale_x_continuous(breaks = yrs) +
+  labs(title = "New rural credit unions vs rural credit unions leaving, each year",
+       subtitle = sprintf("New charter = first reports with under $%.0fm in assets. Rural = headquarters county rural (12 CFR 1026.35, 2024 codes).", NEW_CUT / 1e6),
+       x = NULL, y = "Credit unions", caption = sprintf("Federally insured credit unions, %s-%s. Preliminary.", q_lab(QA), q_lab(QZ))) +
+  theme_minimal(base_size = 12) + theme(legend.position = "bottom", plot.title = element_text(face = "bold"), panel.grid.minor = element_blank())
+ggsave(file.path(OUT7, "rq7_entries_vs_exits.png"), p7, width = 11, height = 5, dpi = 300, bg = "white")
+
+write.csv(spell,          file.path(OUT7, "rq7_spells_all_cus.csv"),  row.names = FALSE)
+write.csv(flows,          file.path(OUT7, "rq7_flows_by_year.csv"),   row.names = FALSE)
+write.csv(tot,            file.path(OUT7, "rq7_totals.csv"),          row.names = FALSE)
+write.csv(rural_entrants, file.path(OUT7, "rq7_rural_entrants.csv"),  row.names = FALSE)
+
+r <- tot %>% filter(grp == "Rural"); o <- tot %>% filter(grp == "Other")
+cat("\n=== SLIDE NUMBERS, Q7 ===\n")
+cat(sprintf("Rural, %d-%d: %d entrants, of which %d new charters (< $%.0fm); %d rural credit unions left.\n",
+            min(yrs), max(yrs), r$entrants, r$new_charters, NEW_CUT / 1e6, r$exits))
+cat(sprintf("About %d rural credit unions left for every new one (other: %d).\n", r$exits_per_new_charter, o$exits_per_new_charter))
+cat(sprintf("New charters per 100 existing per year: rural %.2f, other %.2f.\n", r$new_per_100_per_year, o$new_per_100_per_year))
+cat(sprintf("Of %d rural new charters, %d still open (%.0f%%).\n",
+            sum(re$new_charter), sum(re$new_charter & !re$exited), 100 * mean(!re$exited[re$new_charter])))
