@@ -91,10 +91,13 @@ spell <- p %>%
          small_entry5 = entered & assets_first < NEW_CUT2)
 
 ## year opened, from the Stata panel (cr does not keep it)
-yo <- haven::read_dta(PANEL_FILE, col_select = tidyselect::any_of(c("cu_number", "year", "quarter", "year_opened_cu030")))
-stopifnot("year_opened_cu030 not in the panel" = "year_opened_cu030" %in% names(yo))
+## the field is named year_opened_CU030 in the panel -- match it whatever its case
+yo_col <- grep("^year_opened", names(haven::read_dta(PANEL_FILE, n_max = 0)), ignore.case = TRUE, value = TRUE)[1]
+stopifnot("no year_opened field in the panel" = !is.na(yo_col))
+cat("Year-opened field:", yo_col, "\n")
+yo <- haven::read_dta(PANEL_FILE, col_select = tidyselect::all_of(c("cu_number", yo_col)))
 yo <- haven::zap_labels(yo) %>%
-  transmute(cu_number = as.numeric(cu_number), year_opened = suppressWarnings(as.integer(as.character(year_opened_cu030)))) %>%
+  transmute(cu_number = as.numeric(cu_number), year_opened = suppressWarnings(as.integer(as.character(.data[[yo_col]])))) %>%
   filter(!is.na(year_opened), year_opened > 1900) %>%
   group_by(cu_number) %>% summarise(year_opened = max(year_opened), .groups = "drop")   # latest reported, if it ever changes
 spell <- spell %>% left_join(yo, by = "cu_number") %>%
