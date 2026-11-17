@@ -28,7 +28,7 @@
 #   Rural rates  per 100 credit unions existing at the start of each year.
 #
 # WHAT EACH BLOCK DOES
-#   7.0  gates and set-up
+#   7.0  gates and set-up     7.0b full panel, no $1m floor (entries and exits need every size)
 #   7.1  one row per credit union: first and last quarter, size at entry
 #   7.1b does the panel stop at $1m?   7.1c why existing CUs appear late
 #   7.2  the entrants: how many, how big, rural vs other     (THE COUNT)
@@ -59,6 +59,56 @@ q_year <- function(q) (q - 1L) %/% 4L
 NEW_CUT  <- 2e6      # under $2m at first report = a new charter
 NEW_CUT2 <- 5e6      # check
 p <- cr %>% as_tibble()
+
+## ---- 7.0b  rebuild the panel WITHOUT the $1m floor -------------------------------------
+## 7.1b showed cr stops at exactly $1m, yet the Stata panel holds the smaller credit
+## unions too (99 of 110 late appearers were under $1m just before they "appeared").
+## For counting entries and exits the floor matters: a tiny credit union crossing $1m
+## looks like an entrant, and one shrinking below $1m looks like an exit. So RQ7 reads
+## its own panel: charter types 1-2, 2010 on, EVERY size. Set to FALSE to go back to cr.
+USE_FULL_PANEL <- TRUE
+if (USE_FULL_PANEL) {
+  hdr7  <- names(haven::read_dta(PANEL_FILE, n_max = 0))
+  cols7 <- intersect(c("cu_number", "year", "quarter", "cu_type", "assets_tot", "members",
+                       "networth_pct", "state_code", "county_code"), hdr7)
+  full <- haven::read_dta(PANEL_FILE, col_select = tidyselect::all_of(cols7)) %>%
+    haven::zap_labels() %>%
+    mutate(cu_number = as.numeric(cu_number),
+           year = as.integer(year), quarter = as.integer(quarter),
+           cu_type = suppressWarnings(as.integer(as.character(cu_type))),
+           qidx = year * 4L + quarter,
+           fips = sprintf("%02d%03d", as.integer(state_code), as.integer(county_code))) %>%
+    filter(cu_type %in% UNIVERSE$charter_types, year >= UNIVERSE$first_year,
+           !is.na(assets_tot), qidx <= max(p$qidx)) %>%          # same quarters as cr
+    distinct(cu_number, qidx, .keep_all = TRUE)
+  if (!"networth_pct" %in% names(full)) full$networth_pct <- NA_real_
+
+  ## historical county codes mapped forward, exactly as 3_callreport.R does
+  if (exists("FIPS_FIX")) {
+    full <- full %>% left_join(as_tibble(FIPS_FIX) %>% select(fips = old, fips_new = new), by = "fips") %>%
+      mutate(fips = coalesce(fips_new, fips)) %>% select(-fips_new)
+  } else cat("NOTE: FIPS_FIX not in memory -- run the setup script first if many rows lack a rural flag\n")
+
+  ## rural: take it from cr for the same county and quarter; else the county's latest value in cr;
+  ## else the county table (counties where only sub-$1m credit unions sit)
+  r_q <- p %>% distinct(fips, qidx, rural)
+  r_f <- p %>% arrange(qidx) %>% group_by(fips) %>% summarise(rural_f = last(rural), .groups = "drop")
+  full <- full %>% left_join(r_q, by = c("fips", "qidx")) %>% left_join(r_f, by = "fips") %>%
+    mutate(rural = coalesce(rural, rural_f)) %>% select(-rural_f)
+  if (exists("county") && all(c("fips", "rural24") %in% names(county))) {
+    full <- full %>% left_join(as_tibble(county) %>% select(fips, rural24), by = "fips") %>%
+      mutate(rural = coalesce(rural, rural24)) %>% select(-rural24)
+  }
+  cat("Rows with no rural flag (dropped, as in cr):", sum(is.na(full$rural)), "\n")   ## LOOK -- should be small
+  full <- full %>% filter(!is.na(rural))
+
+  cat(sprintf("cr: %s rows, %d CUs, smallest $%s  |  full panel: %s rows, %d CUs, smallest $%s\n",
+              format(nrow(p), big.mark = ","), n_distinct(p$cu_number), format(min(p$assets_tot), big.mark = ","),
+              format(nrow(full), big.mark = ","), n_distinct(full$cu_number), format(min(full$assets_tot), big.mark = ",")))   ## LOOK
+  cat("Credit unions that are ever under $1m:", n_distinct(full$cu_number[full$assets_tot < 1e6]),
+      "| of them in a rural county:", n_distinct(full$cu_number[full$assets_tot < 1e6 & full$rural == 1L]), "\n")      ## LOOK
+  p <- full
+}
 QA <- min(p$qidx); QZ <- max(p$qidx)
 cat("Panel:", q_lab(QA), "to", q_lab(QZ), "|", n_distinct(p$cu_number), "credit unions\n")   ## LOOK
 nm_col <- intersect(c("cu_name", "CU_NAME", "name"), names(p))[1]
