@@ -16,10 +16,13 @@
 #   Entrant      a credit union whose FIRST quarter in the panel is after the
 #                panel opens. Rural = its headquarters county was rural (2024
 #                codes) in that first quarter.
-#   New charter  an entrant under $2 million in assets at its first report --
-#                a start-up. Larger entrants are most likely conversions (e.g.
-#                a state charter newly federally insured) or re-registrations.
-#                The $5 million cut is shown as a check.
+#   New charter  a GENUINE START-UP: an entrant whose year opened (FOICU field
+#                year_opened_cu030 in the OCE panel) is no earlier than the year
+#                before it first appears. Entrants that opened long before are
+#                existing credit unions appearing late (newly federally insured,
+#                conversions, re-registrations, filing gaps). Size at entry
+#                (< $2m / < $5m) is kept only as a cross-check -- on its own it
+#                counted old, small credit unions as new.
 #   Exit         last quarter before the panel ends (merger, liquidation or
 #                conversion -- outcome codes are not used, they are unverified).
 #   Rural rates  per 100 credit unions existing at the start of each year.
@@ -41,10 +44,13 @@
 # Sequential blocks. Run each, read what it prints (## LOOK), then move on.
 ###############################################################################
 
-suppressPackageStartupMessages({ library(dplyr); library(tidyr); library(ggplot2) })
+suppressPackageStartupMessages({ library(data.table); library(dplyr); library(tidyr); library(ggplot2) })
 
 ## ---- 7.0  gates and set-up -----------------------------------------------------------
-if (!exists("assert_universe")) source(file.path(CODE_DIR, "universe.R"))
+## Always re-read universe.R (an older copy may be in memory), and make sure cr
+## is a data.table, which the universe check expects.
+source(file.path(CODE_DIR, "universe.R"))
+if (!is.data.table(cr)) setDT(cr)
 assert_universe(cr, "rq7.R")
 OUT7 <- file.path(OUT_DIR, "rq7"); dir.create(OUT7, recursive = TRUE, showWarnings = FALSE)
 q_lab <- function(q) sprintf("%dQ%d", (q - 1L) %/% 4L, ((q - 1L) %% 4L) + 1L)
@@ -81,8 +87,24 @@ spell <- p %>%
          has_gap   = n_quarters < (last_q - first_q + 1L),        # dropped out and came back
          entry_year = q_year(first_q),
          exit_year  = ifelse(exited, q_year(last_q), NA_integer_),
-         new_charter  = entered & assets_first < NEW_CUT,
-         new_charter5 = entered & assets_first < NEW_CUT2)
+         small_entry  = entered & assets_first < NEW_CUT,
+         small_entry5 = entered & assets_first < NEW_CUT2)
+
+## year opened, from the Stata panel (cr does not keep it)
+yo <- haven::read_dta(PANEL_FILE, col_select = tidyselect::any_of(c("cu_number", "year", "quarter", "year_opened_cu030")))
+stopifnot("year_opened_cu030 not in the panel" = "year_opened_cu030" %in% names(yo))
+yo <- haven::zap_labels(yo) %>%
+  transmute(cu_number = as.numeric(cu_number), year_opened = suppressWarnings(as.integer(as.character(year_opened_cu030)))) %>%
+  filter(!is.na(year_opened), year_opened > 1900) %>%
+  group_by(cu_number) %>% summarise(year_opened = max(year_opened), .groups = "drop")   # latest reported, if it ever changes
+spell <- spell %>% left_join(yo, by = "cu_number") %>%
+  mutate(new_charter  = entered & !is.na(year_opened) & year_opened >= entry_year - 1L,   # GENUINE start-up
+         entry_kind = case_when(!entered                         ~ "in panel from the start",
+                                new_charter                      ~ "Genuine start-up",
+                                is.na(year_opened)               ~ "Entrant, year opened unknown",
+                                TRUE                             ~ "Existing CU appearing late"))
+spell %>% filter(entered) %>% count(entry_kind, small_entry) %>% print()   ## LOOK -- how size and year-opened disagree
+cat("Entrants with no year opened:", sum(spell$entered & is.na(spell$year_opened)), "(should be few)\n")
 spell %>% summarise(credit_unions = n(), entrants = sum(entered), exits = sum(exited),
                     with_gaps = sum(has_gap)) %>% print()                    ## LOOK
 
@@ -91,16 +113,17 @@ entr <- spell %>% filter(entered)
 entr %>%
   group_by(rural = ifelse(rural_first == 1L, "Rural", "Other")) %>%
   summarise(entrants = n(),
-            new_charters_under_2m = sum(new_charter),
-            new_charters_under_5m = sum(new_charter5),
-            likely_conversions    = sum(!new_charter),
+            genuine_start_ups     = sum(new_charter),
+            existing_appearing_late = sum(!new_charter),
+            check_small_under_2m  = sum(small_entry),
+            check_small_under_5m  = sum(small_entry5),
             median_assets_first_m = round(median(assets_first) / 1e6, 2),
             pct_state_chartered   = round(100 * mean(cu_type == 2L), 0),
             .groups = "drop") %>% print()                                    ## LOOK -- the count (earlier work: about 47 rural, 29 new)
 
 ## ---- 7.3  entries and exits by year, and rates per 100 --------------------------------
 ## existing at the start of each year = present in that year's first quarter
-yrs <- seq(q_year(QA) + 1L, q_year(QZ))
+yrs <- seq(q_year(QA) + 1L, q_year(QZ) - 1L)          # full years only (latest year is partial)
 base <- p %>% filter(qidx %in% (yrs * 4L + 1L)) %>%
   mutate(year = q_year(qidx), grp = ifelse(rural == 1L, "Rural", "Other")) %>%
   count(year, grp, name = "existing")
@@ -127,7 +150,7 @@ flows %>% filter(year > max(year) - 5, grp == "Rural") %>% select(year, new_char
 
 ## ---- 7.4  what became of the rural entrants -------------------------------------------
 re <- entr %>% filter(rural_first == 1L) %>%
-  mutate(type = ifelse(new_charter, "New charter (< $2m)", "Larger entrant (likely conversion)"),
+  mutate(type = entry_kind,
          years_followed = (pmin(last_q, QZ) - first_q) / 4,
          gone_5y  = exited & (last_q - first_q) < 20L,
          followed_5y = (QZ - first_q) >= 20L)
@@ -155,7 +178,7 @@ rural_entrants <- re %>%
   transmute(cu_number, name, state, fips_first, cu_type, type,
             first_quarter = q_lab(first_q),
             status = ifelse(exited, paste("gone after", q_lab(last_q)), "still open"),
-            assets_first_m = round(assets_first / 1e6, 2), members_first,
+            year_opened, assets_first_m = round(assets_first / 1e6, 2), members_first,
             assets_now_m = ifelse(exited, NA, round(assets_last / 1e6, 2)),
             rural_now = rural_last, came_and_went = has_gap) %>%
   arrange(first_quarter)
@@ -171,7 +194,7 @@ p7 <- ggplot(rplot, aes(year, n, fill = flow)) +
   scale_fill_manual(values = c("New rural charters" = "#0E4C55", "Rural credit unions that left" = "#C8553D"), name = NULL) +
   scale_x_continuous(breaks = yrs) +
   labs(title = "New rural credit unions vs rural credit unions leaving, each year",
-       subtitle = sprintf("New charter = first reports with under $%.0fm in assets. Rural = headquarters county rural (12 CFR 1026.35, 2024 codes).", NEW_CUT / 1e6),
+       subtitle = "New charter = genuine start-up (opened no earlier than the year before it first reports). Rural = headquarters county rural (12 CFR 1026.35, 2024 codes).",
        x = NULL, y = "Credit unions", caption = sprintf("Federally insured credit unions, %s-%s. Preliminary.", q_lab(QA), q_lab(QZ))) +
   theme_minimal(base_size = 12) + theme(legend.position = "bottom", plot.title = element_text(face = "bold"), panel.grid.minor = element_blank())
 ggsave(file.path(OUT7, "rq7_entries_vs_exits.png"), p7, width = 11, height = 5, dpi = 300, bg = "white")
@@ -183,8 +206,9 @@ write.csv(rural_entrants, file.path(OUT7, "rq7_rural_entrants.csv"),  row.names 
 
 r <- tot %>% filter(grp == "Rural"); o <- tot %>% filter(grp == "Other")
 cat("\n=== SLIDE NUMBERS, Q7 ===\n")
-cat(sprintf("Rural, %d-%d: %d entrants, of which %d new charters (< $%.0fm); %d rural credit unions left.\n",
-            min(yrs), max(yrs), r$entrants, r$new_charters, NEW_CUT / 1e6, r$exits))
+cat(sprintf("Rural, %d-%d: %d entrants, of which %d genuine start-ups; %d rural credit unions left.\n",
+            min(yrs), max(yrs), r$entrants, r$new_charters, r$exits))
+cat(sprintf("Whole panel %s-%s: %d rural entrants, %d genuine start-ups.\n", q_lab(QA), q_lab(QZ), nrow(re), sum(re$new_charter)))
 cat(sprintf("About %d rural credit unions left for every new one (other: %d).\n", r$exits_per_new_charter, o$exits_per_new_charter))
 cat(sprintf("New charters per 100 existing per year: rural %.2f, other %.2f.\n", r$new_per_100_per_year, o$new_per_100_per_year))
 cat(sprintf("Of %d rural new charters, %d still open (%.0f%%).\n",
